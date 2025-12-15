@@ -500,10 +500,18 @@ class _TransactionsPageState extends State<TransactionsPage> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFce4323).withOpacity(0.08),
+                      color: transaction.status == 0
+                          ? Colors.green.shade50
+                          : Colors.red.shade50,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(icon, color: const Color(0xFFce4323), size: 22),
+                    child: Icon(
+                      icon,
+                      color: transaction.status == 0
+                          ? Colors.green.shade700
+                          : Colors.red.shade700,
+                      size: 22,
+                    ),
                   ),
                   const SizedBox(width: 14),
                   // Transaction details
@@ -574,10 +582,12 @@ class _TransactionsPageState extends State<TransactionsPage> {
                     children: [
                       Text(
                         '₦${transaction.amount.toStringAsFixed(2)}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFFce4323),
+                          color: transaction.status == 0
+                              ? Colors.green.shade700
+                              : Colors.red.shade700,
                         ),
                       ),
                       const SizedBox(height: 6),
@@ -597,7 +607,9 @@ class _TransactionsPageState extends State<TransactionsPage> {
                         child: Text(
                           transaction.statusText,
                           style: TextStyle(
-                            color: statusColor,
+                            color: transaction.status == 0
+                                ? Colors.green.shade700
+                                : Colors.red.shade700,
                             fontWeight: FontWeight.w600,
                             fontSize: 11,
                           ),

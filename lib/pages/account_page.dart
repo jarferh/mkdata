@@ -6,6 +6,7 @@ import 'delete_account_page.dart';
 import 'contact_page.dart';
 import 'change_transaction_pin_page.dart';
 import 'edit_profile_page.dart';
+import 'invite_page.dart';
 
 class AccountPage extends StatefulWidget {
   const AccountPage({super.key});
@@ -292,6 +293,16 @@ class _AccountPageState extends State<AccountPage> {
                     await loadUserData();
                     await _loadProfilePhoto();
                   }
+                },
+              ),
+              _buildMenuItemWithIcon(
+                icon: Icons.card_giftcard,
+                label: 'Refer & Earn',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const InvitePage()),
+                  );
                 },
               ),
               _buildMenuItemWithIcon(

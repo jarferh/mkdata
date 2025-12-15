@@ -3,7 +3,6 @@ require_once __DIR__ . '/../config/database.php';
 
 use Binali\Config\Database;
 use PDO;
-use Exception;
 
 class UserService {
     private $conn;

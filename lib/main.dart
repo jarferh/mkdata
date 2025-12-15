@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import './pages/splash_page.dart';
 import './pages/dashboard_page.dart';
 import './pages/pin_login_page.dart';
@@ -10,8 +11,37 @@ import './pages/wallet_page.dart';
 import './pages/account_page.dart';
 import './pages/welcome_page.dart';
 import './pages/onboarding_page.dart';
+import './services/firebase_service.dart';
+import './services/notification_service.dart';
 
-void main() {
+/// Background message handler (must be a top-level function)
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  debugPrint('✓ Handling background message: ${message.notification?.title}');
+  // Note: Firebase initialization may not be complete in background handler
+  // Just log the message; foreground handler will display notifications
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase
+  try {
+    await FirebaseService().initialize();
+  } catch (e) {
+    debugPrint('Firebase initialization failed: $e');
+  }
+
+  // Initialize local notifications
+  try {
+    await NotificationService().initialize();
+  } catch (e) {
+    debugPrint('Notification service initialization failed: $e');
+  }
+
+  // Register background message handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
   runApp(const MyApp());
 }
 
@@ -53,6 +83,21 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    // Set up foreground notification handler
+    final firebaseService = FirebaseService();
+    final notificationService = NotificationService();
+
+    firebaseService.onForegroundMessage = (RemoteMessage message) {
+      // Display notification when app is in foreground
+      notificationService.displayForegroundNotification(message);
+    };
+
+    firebaseService.onMessageOpenedFromTerminatedApp = (RemoteMessage message) {
+      debugPrint('App opened from terminated state via notification');
+      // Navigate to relevant page based on notification payload
+      // This is handled by NotificationService._routeNotification()
+    };
   }
 
   @override

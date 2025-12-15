@@ -39,6 +39,31 @@ if(!empty($data->email) && !empty($data->password)){
                 "phone" => $user->sPhone,
                 "wallet" => $user->sWallet
             ));
+            // If client included an fcm_token during login, insert into device_tokens
+            if (!empty($data->fcm_token)) {
+                try {
+                    // Upsert token and update platform & last_seen when token already exists for the user
+                    $stmt = $db->prepare('INSERT INTO device_tokens (user_id, token, platform, last_seen) VALUES (:uid, :token, :platform, NOW()) ON DUPLICATE KEY UPDATE last_seen = NOW(), platform = VALUES(platform)');
+                    $platform = isset($data->platform) ? $data->platform : null;
+                    $token = $data->fcm_token;
+                    $stmt->bindParam(':uid', $user->sId);
+                    $stmt->bindParam(':token', $token);
+                    $stmt->bindParam(':platform', $platform);
+                    $stmt->execute();
+                } catch (Exception $e) {
+                    error_log('Failed to save device token on login for user ' . $user->sId . ': ' . $e->getMessage());
+                }
+            }
+            
+            // Send login notification
+            try {
+                require_once __DIR__ . '/../mkdata/api/send-transaction-notification.php';
+                sendTransactionNotification($user->sId, 'login', [
+                    'time' => date('H:i')
+                ]);
+            } catch (Exception $e) {
+                error_log('Failed to send login notification for user ' . $user->sId . ': ' . $e->getMessage());
+            }
         }
         else{
             http_response_code(401);

@@ -8,9 +8,9 @@ use Exception;
 if (!class_exists('Binali\Config\Database')) {
     class Database {    
         private string $host = "localhost";
-        private string $db_name = "infiniti_vtuapi";
-        private string $username = "infiniti_vtuapi";
-        private string $password = "Vtuapi@1231#";
+        private string $db_name = "entafhdn_mkdata";
+        private string $username = "entafhdn_mkdata";
+        private string $password = "entafhdn_mkdata";
         private ?PDO $conn = null;
 
     public function __construct() {
@@ -59,6 +59,26 @@ if (!class_exists('Binali\Config\Database')) {
             error_log("Connection test failed: " . $e->getMessage());
             return false;
         }
+    }
+
+    public function execute($query, $params = []) {
+        try {
+            $stmt = $this->conn->prepare($query);
+            $result = $stmt->execute($params);
+            return $result ? $stmt->rowCount() : 0;
+        } catch(PDOException $e) {
+            error_log("Execute Error: " . $e->getMessage());
+            throw new Exception("Database execute failed: " . $e->getMessage());
         }
+    }
+
+    public function lastInsertId() {
+        try {
+            return $this->conn->lastInsertId();
+        } catch(PDOException $e) {
+            error_log("LastInsertId Error: " . $e->getMessage());
+            throw new Exception("Failed to get last insert ID");
+        }
+    }
 }
 }

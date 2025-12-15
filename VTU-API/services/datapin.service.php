@@ -1,14 +1,14 @@
 <?php
-require_once __DIR__ . '/../db/database.php';
+require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
 use Binali\Models;
 
 use PDO;
 use PDOException;
-use Exception;
+use Binali\Config\Database;
 use Binali\Config\Config;
 
-class DataPinService {
+class DataPinService {class DataPinService {
     private $db;
     private $config;
 

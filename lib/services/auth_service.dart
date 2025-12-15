@@ -1,19 +1,43 @@
 import '../models/user_model.dart';
 import 'api_service.dart';
+import 'firebase_service.dart';
 
 class AuthService {
   final ApiService _apiService = ApiService();
+  final FirebaseService _firebaseService = FirebaseService();
 
-  Future<User> login(String email, String password) async {
+  Future<User> login(
+    String email,
+    String password, {
+    String? fcmToken,
+    String? platform,
+  }) async {
     try {
-      final response = await _apiService.post('auth/login.php', {
-        'email': email,
-        'password': password,
-      });
+      // Optionally include fcm_token if present in apiService headers (or passed via extra)
+      final payload = {'email': email, 'password': password};
+      if (fcmToken != null && fcmToken.isNotEmpty) {
+        payload['fcm_token'] = fcmToken;
+      }
+      if (platform != null && platform.isNotEmpty) {
+        payload['platform'] = platform;
+      }
+
+      final response = await _apiService.post('auth/login.php', payload);
 
       if (response['message'] == 'Login successful.') {
         await _apiService.saveUserData(response);
-        return User.fromJson(response);
+        final user = User.fromJson(response);
+
+        // After successful login, register device token with backend
+        final userId = response['id']?.toString() ?? '';
+        if (userId.isNotEmpty) {
+          await _firebaseService.sendTokenToBackend(
+            userId: userId,
+            deviceType: platform ?? 'android',
+          );
+        }
+
+        return user;
       } else {
         throw Exception(response['message']);
       }
@@ -28,17 +52,30 @@ class AuthService {
     required String mobile,
     required String password,
     String? referralCode,
+    String? fcmToken,
+    String? platform,
   }) async {
     try {
-      final response = await _apiService.post('auth/register.php', {
+      final payload = {
         'fullname': fullname,
         'email': email,
         'mobile': mobile,
         'password': password,
         'referral_code': referralCode,
-      });
+      };
+      if (fcmToken != null && fcmToken.isNotEmpty) {
+        payload['fcm_token'] = fcmToken;
+      }
+      if (platform != null && platform.isNotEmpty) {
+        payload['platform'] = platform;
+      }
+
+      final response = await _apiService.post('auth/register.php', payload);
 
       if (response['message'] == 'User was created.') {
+        // After successful registration, attempt to register device token
+        // Note: We won't have user ID yet, so this is best-effort
+        // The token will be registered properly when user logs in
         return true;
       }
 

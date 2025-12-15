@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
@@ -39,19 +38,6 @@ class _ChangeTransactionPinPageState extends State<ChangeTransactionPinPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       String? userId = prefs.getString('user_id');
-      if (userId == null) {
-        final userJson = prefs.getString('user_data');
-        if (userJson != null && userJson.isNotEmpty) {
-          try {
-            final Map<String, dynamic> userMap = Map<String, dynamic>.from(
-              jsonDecode(userJson),
-            );
-            userId = (userMap['sId'] ?? userMap['id'])?.toString();
-          } catch (_) {
-            userId = null;
-          }
-        }
-      }
 
       if (userId == null) {
         await prefs.setString('login_pin', _enteredPin);

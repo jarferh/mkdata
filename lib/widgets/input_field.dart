@@ -53,13 +53,10 @@ class _InputFieldState extends State<InputField> {
           suffixIcon: widget.obscureText
               ? GestureDetector(
                   onTap: _toggleObscure,
-                  child: Text(
-                    _obscureText ? 'Show' : 'Hide',
-                    style: const TextStyle(
-                      color: Color(0xFFce4323),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12,
-                    ),
+                  child: Icon(
+                    _obscureText ? Icons.visibility_off : Icons.visibility,
+                    color: Colors.grey,
+                    size: 24,
                   ),
                 )
               : null,

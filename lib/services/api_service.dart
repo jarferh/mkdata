@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
   static const String baseUrl =
-      'https://api.bdudata.com'; // Base URL without trailing slash
+      'https://api.mkdata.com.ng'; // Base URL without trailing slash
   static const String _userIdKey = 'user_id';
   static const String _userKey = 'user_data';
 

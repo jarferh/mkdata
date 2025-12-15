@@ -3,9 +3,9 @@ use Binali\Models;
 
 use PDO;
 use PDOException;
-use Exception;
+use Binali\Config\Database;
 use Binali\Config\Config;
-require_once __DIR__ . '/../db/database.php';
+require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
 
 class AirtimeService {

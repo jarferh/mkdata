@@ -163,23 +163,15 @@ class _WelcomePageState extends State<WelcomePage> {
     }
   }
 
-  Future<bool> _verifyInternetAccess() async {
-    try {
-      final uri = Uri.parse('https://www.google.com/generate_204');
-      final response = await http.get(uri).timeout(const Duration(seconds: 3));
-      return response.statusCode == 204 || response.statusCode == 200;
-    } catch (e) {
-      return false;
-    }
-  }
-
   Future<bool> _checkInternetConnection() async {
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
-      if (connectivityResult == ConnectivityResult.none) return false;
-      return await _verifyInternetAccess();
+      // Allow entry if any internet connection is available (wifi, mobile, etc.)
+      // Only block if no internet connection is detected
+      return connectivityResult != ConnectivityResult.none;
     } catch (e) {
-      return false;
+      // If connectivity check fails, assume internet is available to not block user
+      return true;
     }
   }
 

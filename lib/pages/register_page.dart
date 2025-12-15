@@ -4,9 +4,11 @@ import 'package:flutter/services.dart';
 import '../utils/network_utils.dart';
 import '../widgets/input_field.dart' as input_widgets;
 import 'login_page.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'dart:io' show Platform;
 import '../services/auth_service.dart';
 
-// Wave Clipper for the register page header
+// Wave Clipper for the register page header (simple and consistent with other pages)
 class WaveClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
@@ -162,44 +164,136 @@ class _RegisterPageState extends State<RegisterPage> {
       context: context,
       barrierDismissible: false,
       builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          title: Wrap(
-            spacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: const [
-              Icon(Icons.check_circle, color: Colors.green, size: 28),
-              Text(
-                'Registration Successful',
-                style: TextStyle(fontSize: 16),
-                softWrap: true,
-              ),
-            ],
-          ),
-          content: const Text(
-            'Your account has been created successfully. You can now login with your email and password.',
-          ),
-          actions: <Widget>[
-            TextButton(
-              style: TextButton.styleFrom(
-                backgroundColor: const Color(0xFFce4323),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+        return Dialog(
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.15),
+                  blurRadius: 20,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 8),
                 ),
-              ),
-              child: const Text('Login Now'),
-              onPressed: () {
-                Navigator.of(context).pop(); // Close dialog
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const LoginPage()),
-                );
-              },
+              ],
             ),
-          ],
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Success icon with background
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.green.shade400,
+                        Colors.green.shade600,
+                      ],
+                    ),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Icon(
+                            Icons.check_circle_outline,
+                            color: Colors.white,
+                            size: 48,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Registration Successful',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Content
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Your account has been created successfully!',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 15,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'You can now log in with your email and password.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 14,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Button
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFce4323),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        elevation: 0,
+                      ),
+                      onPressed: () {
+                        Navigator.of(context).pop(); // Close dialog
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const LoginPage(),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        'Log In Now',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -210,38 +304,130 @@ class _RegisterPageState extends State<RegisterPage> {
     return showDialog(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          title: Wrap(
-            spacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: const [
-              Icon(Icons.error_outline, color: Colors.red, size: 28),
-              Text(
-                'Registration Failed',
-                style: TextStyle(fontSize: 16),
-                softWrap: true,
-              ),
-            ],
-          ),
-          content: Text(errorMessage),
-          actions: <Widget>[
-            TextButton(
-              style: TextButton.styleFrom(
-                backgroundColor: Colors.deepOrange.shade700,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+        return Dialog(
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.15),
+                  blurRadius: 20,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 8),
                 ),
-              ),
-              child: const Text('OK'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+              ],
             ),
-          ],
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Error icon with background
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.red.shade400,
+                        Colors.red.shade600,
+                      ],
+                    ),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Icon(
+                            Icons.error_outline,
+                            color: Colors.white,
+                            size: 48,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Registration Failed',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Content
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      Text(
+                        errorMessage,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 15,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Please check your details and try again.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 14,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Button
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFce4323),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        elevation: 0,
+                      ),
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                      },
+                      child: const Text(
+                        'Try Again',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -270,12 +456,35 @@ class _RegisterPageState extends State<RegisterPage> {
       }
 
       // Step 3: Proceed with registration
+      // Obtain FCM token (best-effort) and include in registration
+      String? fcmToken;
+      try {
+        fcmToken = await FirebaseMessaging.instance.getToken();
+      } catch (e) {
+        debugPrint('FCM token retrieval failed: $e');
+        fcmToken = null;
+      }
+
+      String? platform;
+      try {
+        if (Platform.isAndroid)
+          platform = 'android';
+        else if (Platform.isIOS)
+          platform = 'ios';
+        else
+          platform = 'unknown';
+      } catch (e) {
+        platform = 'unknown';
+      }
+
       final success = await _authService.register(
         fullname: _fullNameController.text.trim(),
         email: _emailController.text.trim(),
         mobile: _mobileController.text.trim(),
         password: _passwordController.text,
         referralCode: _referralController.text.trim(),
+        fcmToken: fcmToken,
+        platform: platform,
       );
 
       if (mounted && success) {
@@ -435,7 +644,7 @@ class _RegisterPageState extends State<RegisterPage> {
                         ),
                         const SizedBox(height: 16),
                         input_widgets.InputField(
-                          label: 'Referral Username (Optional)',
+                          label: 'Referral Number (Optional)',
                           prefixIcon: Icons.person_add_outlined,
                           controller: _referralController,
                         ),

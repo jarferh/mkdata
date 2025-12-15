@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -50,22 +49,6 @@ class _PinSetupPageState extends State<PinSetupPage> {
       final api = ApiService();
       // Determine user id from saved user_data or separate key
       String? userId = prefs.getString('user_id');
-      // try to find user_id in shared prefs below if not already present
-
-      // Fall back: try to extract from user_data if available
-      if (userId == null) {
-        final userJson = prefs.getString('user_data');
-        if (userJson != null && userJson.isNotEmpty) {
-          try {
-            final Map<String, dynamic> userMap = Map<String, dynamic>.from(
-              jsonDecode(userJson),
-            );
-            userId = (userMap['sId'] ?? userMap['id'])?.toString();
-          } catch (_) {
-            userId = null;
-          }
-        }
-      }
 
       // If still null, we can't call the API reliably; save locally only.
       if (userId == null) {

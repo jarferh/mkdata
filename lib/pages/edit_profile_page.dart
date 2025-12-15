@@ -103,13 +103,46 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   Future<void> _submitChanges() async {
-    if (!_formKey.currentState!.validate()) return;
-
     try {
       setState(() => _isSubmitting = true);
 
       final prefs = await SharedPreferences.getInstance();
       String? userId = prefs.getString('user_id');
+
+      // Check if only image is being updated
+      bool isFirstNameChanged =
+          _firstNameController.text.trim() !=
+          (_userData?['sFname']?.toString() ?? '');
+      bool isLastNameChanged =
+          _lastNameController.text.trim() !=
+          (_userData?['sLname']?.toString() ?? '');
+      bool isPasswordChanged = _newPasswordController.text.isNotEmpty;
+      bool isImageChanged = _selectedImagePath != null;
+
+      // If only image is changed, just save it locally without API call
+      if (isImageChanged &&
+          !isFirstNameChanged &&
+          !isLastNameChanged &&
+          !isPasswordChanged) {
+        await prefs.setString('profile_photo_path', _selectedImagePath!);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Profile photo updated successfully'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+
+          // Navigate back after short delay
+          await Future.delayed(const Duration(milliseconds: 500));
+          Navigator.of(context).pop(true);
+        }
+        return;
+      }
+
+      // Validate form for other updates
+      if (!_formKey.currentState!.validate()) return;
 
       // Prepare update data
       final updateData = {
@@ -126,7 +159,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
       // Send update request to API
       final response = await http.post(
-        Uri.parse('https://api.bdudata.com/api/update-profile'),
+        Uri.parse('https://api.mkdata.com.ng/api/update-profile'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode(updateData),
       );

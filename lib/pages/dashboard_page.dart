@@ -17,6 +17,10 @@ import 'datapin_page.dart';
 import 'card_pin_page.dart';
 import 'transactions_page.dart';
 import 'contact_page.dart';
+import 'daily_data_page.dart';
+import 'past_questions_page.dart';
+import 'welcome_bonus_page.dart';
+import 'spin_and_win_page.dart';
 
 // Custom Clipper for curved bottom background
 class CurvedBottomClipper extends CustomClipper<Path> {
@@ -57,6 +61,9 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _userLoadFailed = false;
   bool _expandFloatingMenu = false;
   bool _isGeneratingAccounts = false;
+  bool _bonusClaimable = false;
+  double _bonusAmount = 0.0;
+  bool _bonusDismissed = false;
 
   // Helper to format numbers with thousand separators (e.g. 10,000)
   String _addCommas(String s) {
@@ -349,7 +356,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
       // Fetch latest data in background
       final response = await http.get(
-        Uri.parse('https://api.bdudata.com/api/subscriber?id=$userId'),
+        Uri.parse('https://api.mkdata.com.ng/api/subscriber?id=$userId'),
       );
 
       if (response.statusCode == 200) {
@@ -386,6 +393,59 @@ class _DashboardPageState extends State<DashboardPage> {
     } finally {
       // Stop showing any loading indicator after background fetch completes.
       if (mounted) setState(() => _isLoadingUserData = false);
+
+      // Load bonus status after user data
+      _checkWelcomeBonusStatus();
+    }
+  }
+
+  Future<void> _checkWelcomeBonusStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('user_id');
+
+      if (userId == null) return;
+
+      // Fetch bonus settings
+      final settingsResponse = await http
+          .get(
+            Uri.parse('https://api.mkdata.com.ng/api/welcome-bonus-settings'),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (settingsResponse.statusCode == 200) {
+        final settingsData = json.decode(settingsResponse.body);
+        if (settingsData['status'] == 'success') {
+          setState(() {
+            _bonusAmount = double.parse(
+              settingsData['data']['amount'].toString(),
+            );
+          });
+        }
+      }
+
+      // Fetch user's bonus status
+      final statusResponse = await http
+          .get(
+            Uri.parse(
+              'https://api.mkdata.com.ng/api/welcome-bonus-status?user_id=$userId',
+            ),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (statusResponse.statusCode == 200) {
+        final statusData = json.decode(statusResponse.body);
+        if (statusData['status'] == 'success') {
+          final data = statusData['data'];
+          if (mounted) {
+            setState(() {
+              _bonusClaimable = !(data['has_claimed'] ?? false);
+            });
+          }
+        }
+      }
+    } catch (e) {
+      print('Error checking bonus status: $e');
     }
   }
 
@@ -456,10 +516,9 @@ class _DashboardPageState extends State<DashboardPage> {
       if (userId == null && _userData != null && _userData!['sId'] != null) {
         userId = _userData!['sId'].toString();
       }
-      if (userId == null) throw Exception('User ID not available');
 
       final uri = Uri.parse(
-        'https://api.bdudata.com/api/generate-palmpay-paga',
+        'https://api.mkdata.com.ng/api/generate-palmpay-paga',
       );
       final response = await http.post(
         uri,
@@ -1226,6 +1285,103 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ),
                 SizedBox(height: getResponsiveSize(context, 16)),
+
+                // Welcome Bonus Banner
+                if (_bonusClaimable && !_bonusDismissed)
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: getResponsiveSize(context, 16),
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.green.shade600,
+                            Colors.green.shade400,
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.green.withOpacity(0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      padding: EdgeInsets.all(getResponsiveSize(context, 12)),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.card_giftcard,
+                            color: Colors.white,
+                            size: getResponsiveSize(context, 28),
+                          ),
+                          SizedBox(width: getResponsiveSize(context, 12)),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Claim Your Welcome Bonus!',
+                                  style: TextStyle(
+                                    fontSize: getResponsiveSize(context, 13),
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                SizedBox(height: getResponsiveSize(context, 2)),
+                                Text(
+                                  '₦${_bonusAmount.toStringAsFixed(2)} waiting for you',
+                                  style: TextStyle(
+                                    fontSize: getResponsiveSize(context, 11),
+                                    color: Colors.white.withOpacity(0.9),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () =>
+                                _pushAndRefresh(const WelcomeBonusPage()),
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: getResponsiveSize(context, 12),
+                                vertical: getResponsiveSize(context, 6),
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                'Claim',
+                                style: TextStyle(
+                                  fontSize: getResponsiveSize(context, 11),
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: getResponsiveSize(context, 8)),
+                          GestureDetector(
+                            onTap: () {
+                              setState(() => _bonusDismissed = true);
+                            },
+                            child: Icon(
+                              Icons.close,
+                              color: Colors.white.withOpacity(0.7),
+                              size: getResponsiveSize(context, 20),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                SizedBox(height: getResponsiveSize(context, 16)),
                 Padding(
                   padding: EdgeInsets.symmetric(
                     horizontal: getResponsiveSize(context, 16),
@@ -1438,6 +1594,12 @@ class _DashboardPageState extends State<DashboardPage> {
                             () => _pushAndRefresh(const DataPage()),
                           ),
                           _buildFeatureButton(
+                            'Daily Data',
+                            Icons.calendar_today,
+                            const Color(0xFFce4323),
+                            () => _pushAndRefresh(const DailyDataPage()),
+                          ),
+                          _buildFeatureButton(
                             'Airtime',
                             Icons.phone_iphone,
                             const Color(0xFFce4323),
@@ -1478,6 +1640,24 @@ class _DashboardPageState extends State<DashboardPage> {
                             Icons.card_membership,
                             const Color(0xFFce4323),
                             () => _pushAndRefresh(const CardPinPage()),
+                          ),
+                          _buildFeatureButton(
+                            'Past Q',
+                            Icons.help_outline,
+                            const Color(0xFFce4323),
+                            () => _pushAndRefresh(const PastQuestionsPage()),
+                          ),
+                          _buildFeatureButton(
+                            'Welcome Bonus',
+                            Icons.card_giftcard,
+                            const Color(0xFFce4323),
+                            () => _pushAndRefresh(const WelcomeBonusPage()),
+                          ),
+                          _buildFeatureButton(
+                            'Spin & Win',
+                            Icons.casino,
+                            const Color(0xFFce4323),
+                            () => _pushAndRefresh(const SpinAndWinPage()),
                           ),
                         ],
                       ),

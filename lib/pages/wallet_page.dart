@@ -170,7 +170,6 @@ class _WalletPageState extends State<WalletPage>
       if (userId == null && userData != null && userData!['sId'] != null) {
         userId = userData!['sId'].toString();
       }
-      if (userId == null) throw Exception('User ID not available');
 
       final uri = Uri.parse('${ApiService.baseUrl}/api/generate-palmpay-paga');
       final response = await http.post(

@@ -312,10 +312,14 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
         // Amount
         Text(
           '₦${widget.amount.replaceAll(RegExp(r'\.00$'), '')}',
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 32,
             fontWeight: FontWeight.bold,
-            color: Color(0xFFce4323),
+            color:
+                _status.toLowerCase() == 'success' ||
+                    _status.toLowerCase() == 'successful'
+                ? Colors.green.shade700
+                : (_isFailed() ? Colors.red.shade700 : const Color(0xFFce4323)),
           ),
         ),
 

@@ -249,14 +249,15 @@ class User
             }
             
             // Persist both accounts to database
+            // NOTE: Palmpay is saved to sPaga, Paga is saved to sAsfiyBank
             try {
                 $pagaNumber = $pagaAccountNumber ?? '';
                 $query = "UPDATE " . $this->table_name . " 
-                         SET sPalmpayBank = :palmpay, sPaga = :paga, 
+                         SET sPaga = :palmpay, sAsfiyBank = :paga, 
                              accountReference = :palmpayRef, sBankName = :bankName
                          WHERE sId = :id";
                 $stmt = $this->conn->prepare($query);
-                $bankName = 'app';
+                $bankName = 'application';
                 $stmt->bindParam(':palmpay', $palmpayAccountNumber, \PDO::PARAM_STR);
                 $stmt->bindParam(':paga', $pagaNumber, \PDO::PARAM_STR);
                 $stmt->bindParam(':palmpayRef', $palmpayRef, \PDO::PARAM_STR);
@@ -273,67 +274,273 @@ class User
         }
     }
     
-        public function create() {
-            try {
-                // Generate API key
-                $this->sApiKey = bin2hex(random_bytes(32));
-
-                $query = "INSERT INTO {$this->table_name} 
-                (sApiKey, sFname, sLname, sEmail, sPhone, sPass, sReferal, sWallet, sRegStatus, sRegDate)
-                VALUES
-                (:sApiKey, :sFname, :sLname, :sEmail, :sPhone, :sPass, :sReferal, 0, 0, NOW())";
-
-                $stmt = $this->conn->prepare($query);
-
-                // Sanitize input
-                $this->sFname = htmlspecialchars(strip_tags($this->sFname));
-                $this->sLname = htmlspecialchars(strip_tags($this->sLname));
-                $this->sEmail = htmlspecialchars(strip_tags($this->sEmail));
-                $this->sPhone = htmlspecialchars(strip_tags($this->sPhone));
-                $this->sReferal = htmlspecialchars(strip_tags($this->sReferal));
-
-                // Hash the password using website-compatible hash
-                $password_hash = $this->computeWebsiteHash($this->sPass);
-
-                // Bind values
-                $stmt->bindParam(":sApiKey", $this->sApiKey);
-                $stmt->bindParam(":sFname", $this->sFname);
-                $stmt->bindParam(":sLname", $this->sLname);
-                $stmt->bindParam(":sEmail", $this->sEmail);
-                $stmt->bindParam(":sPhone", $this->sPhone);
-                $stmt->bindParam(":sPass", $password_hash);
-                $stmt->bindParam(":sReferal", $this->sReferal);
-
-                if($stmt->execute()) {
-                    // Get the last inserted ID
-                    $lastId = $this->conn->lastInsertId();
-
-                    // Attempt to create virtual account but do not fail registration if it fails.
-                    try {
-                        $this->createVirtualAccount(
-                            $lastId,
-                            $this->sFname,
-                            $this->sLname,
-                            $this->sPhone,
-                            $this->sEmail
-                        );
-                    } catch (Exception $e) {
-                        // Log the error but continue; account can be generated later.
-                        error_log("Non-fatal: createVirtualAccount failed for sId={$lastId}: " . $e->getMessage());
-                    }
-
-                    // Registration succeeded regardless of virtual account creation outcome
-                    return true;
-                }
-
-                return false;
-            } catch (Exception $e) {
-                error_log("Error in create: " . $e->getMessage());
+    /**
+     * Generate specific virtual accounts
+     * @param int $id User ID
+     * @param string $fname First name
+     * @param string $lname Last name
+     * @param string $phone Phone number
+     * @param string $email Email address
+     * @param string $type Account type: 'palmpay', 'paga', or 'all' (default: 'all')
+     * @return bool
+     */
+    public function createSelectiveVirtualAccount($id, $fname, $lname, $phone, $email, $type = 'all') {
+        try {
+            if (!$this->conn) {
+                error_log("Database connection not initialized");
                 return false;
             }
+            
+            // Validate type parameter
+            $validTypes = ['palmpay', 'paga', 'all'];
+            if (!in_array($type, $validTypes)) {
+                error_log("Invalid type parameter: $type. Must be one of: " . implode(', ', $validTypes));
+                return false;
+            }
+            
+            // Fetch Aspfiy API credentials from apiconfigs table
+            $debugQuery = "DESCRIBE apiconfigs";
+            $debugStmt = $this->conn->prepare($debugQuery);
+            $debugStmt->execute();
+            $columns = $debugStmt->fetchAll(\PDO::FETCH_COLUMN, 0);
+            error_log("Apiconfigs table columns: " . json_encode($columns));
+            
+            // Try to fetch API key
+            $possibleValueColumns = ['sValue', 'value', 'sVal', 'config_value', 'data'];
+            $valueColumn = null;
+            
+            foreach ($possibleValueColumns as $col) {
+                if (in_array($col, $columns)) {
+                    $valueColumn = $col;
+                    break;
+                }
+            }
+            
+            if (!$valueColumn) {
+                error_log("Could not find value column in apiconfigs table. Available columns: " . implode(', ', $columns));
+                return false;
+            }
+            
+            error_log("Using column: " . $valueColumn . " for apiconfigs values");
+            
+            // Get API key
+            $configQuery = "SELECT `" . $valueColumn . "` FROM apiconfigs WHERE name = :name LIMIT 1";
+            $stmt = $this->conn->prepare($configQuery);
+            $apiKeyName = 'asfiyApi';
+            $stmt->bindParam(':name', $apiKeyName, \PDO::PARAM_STR);
+            $stmt->execute();
+            
+            if ($stmt->rowCount() === 0) {
+                error_log("Aspfiy API key not found in apiconfigs");
+                return false;
+            }
+            
+            $apiKeyRow = $stmt->fetch(\PDO::FETCH_ASSOC);
+            $aspfiyApiKey = $apiKeyRow[$valueColumn];
+            error_log("Retrieved API key: " . substr($aspfiyApiKey, 0, 10) . "...");
+            
+            // Get webhook URL
+            $stmt = $this->conn->prepare($configQuery);
+            $webhookName = 'asfiyWebhook';
+            $stmt->bindParam(':name', $webhookName, \PDO::PARAM_STR);
+            $stmt->execute();
+            
+            if ($stmt->rowCount() === 0) {
+                error_log("Aspfiy webhook URL not found in apiconfigs");
+                return false;
+            }
+            
+            $webhookRow = $stmt->fetch(\PDO::FETCH_ASSOC);
+            $aspfiyWebhook = $webhookRow[$valueColumn];
+            error_log("Retrieved webhook: " . $aspfiyWebhook);
+            
+            // Generate unique references for both accounts
+            $timestamp = time();
+            $randomStr = bin2hex(random_bytes(4));
+            $palmpayRef = "MK" . $id . $timestamp . $randomStr;
+            $pagaRef = "MK" . $id . ($timestamp + 1) . bin2hex(random_bytes(4));
+            error_log("Generated references - Palmpay: " . $palmpayRef . ", Paga: " . $pagaRef);
+            
+            $palmpayAccountNumber = null;
+            $pagaAccountNumber = null;
+            
+            // Create Palmpay account if requested
+            if ($type === 'palmpay' || $type === 'all') {
+                $palmpayPayload = [
+                    'reference' => $palmpayRef,
+                    'firstName' => $fname,
+                    'lastName' => $lname,
+                    'phone' => $phone,
+                    'email' => $email,
+                    'webhookUrl' => $aspfiyWebhook
+                ];
+                
+                $palmpayResponse = $this->callAspfiyApi('reserve-palmpay', $palmpayPayload, $aspfiyApiKey);
+                if (!$palmpayResponse) {
+                    error_log("Failed to create Palmpay account");
+                    if ($type === 'palmpay') {
+                        return false; // Fail only if Palmpay was specifically requested
+                    }
+                    // Continue if type is 'all'
+                } else {
+                    $palmpayAccountNumber = $this->extractAccountNumber($palmpayResponse);
+                    if (empty($palmpayAccountNumber)) {
+                        error_log("Could not extract Palmpay account number");
+                        error_log("Full Palmpay response: " . json_encode($palmpayResponse));
+                        if ($type === 'palmpay') {
+                            return false;
+                        }
+                    } else {
+                        error_log("Successfully extracted Palmpay account number: " . $palmpayAccountNumber);
+                    }
+                }
+            }
+            
+            // Create Paga account if requested
+            if ($type === 'paga' || $type === 'all') {
+                $pagaPayload = [
+                    'reference' => $pagaRef,
+                    'firstName' => $fname,
+                    'lastName' => $lname,
+                    'phone' => $phone,
+                    'email' => $email,
+                    'webhookUrl' => $aspfiyWebhook
+                ];
+                
+                $pagaResponse = $this->callAspfiyApi('reserve-paga', $pagaPayload, $aspfiyApiKey);
+                if (!$pagaResponse) {
+                    error_log("Failed to create Paga account");
+                    if ($type === 'paga') {
+                        return false; // Fail only if Paga was specifically requested
+                    }
+                    // Continue if type is 'all'
+                } else {
+                    $pagaAccountNumber = $this->extractAccountNumber($pagaResponse);
+                    if (empty($pagaAccountNumber)) {
+                        error_log("Could not extract Paga account number");
+                        error_log("Full Paga response: " . json_encode($pagaResponse));
+                        if ($type === 'paga') {
+                            return false;
+                        }
+                    } else {
+                        error_log("Successfully extracted Paga account number: " . $pagaAccountNumber);
+                    }
+                }
+            }
+            
+            // Update database with generated accounts
+            try {
+                $updates = [];
+                $params = [];
+                
+                if ($palmpayAccountNumber) {
+                    $updates[] = "sPaga = :palmpay";
+                    $params[':palmpay'] = $palmpayAccountNumber;
+                }
+                
+                if ($pagaAccountNumber) {
+                    $updates[] = "sAsfiyBank = :paga";
+                    $params[':paga'] = $pagaAccountNumber;
+                }
+                
+                if (empty($updates)) {
+                    error_log("No accounts were successfully generated");
+                    return false;
+                }
+                
+                // Always set bankName and reference
+                $updates[] = "sBankName = :bankName";
+                $params[':bankName'] = 'application';
+                
+                if ($palmpayAccountNumber) {
+                    $updates[] = "accountReference = :palmpayRef";
+                    $params[':palmpayRef'] = $palmpayRef;
+                }
+                
+                $params[':id'] = $id;
+                
+                $query = "UPDATE " . $this->table_name . " 
+                         SET " . implode(', ', $updates) . "
+                         WHERE sId = :id";
+                
+                $stmt = $this->conn->prepare($query);
+                return $stmt->execute($params);
+            } catch (\PDOException $e) {
+                error_log("Database error: " . $e->getMessage());
+                return false;
+            }
+        } catch (Exception $e) {
+            error_log("Error in createSelectiveVirtualAccount: " . $e->getMessage());
+            return false;
         }
-    
-        public function emailExists() {
+    }
+
+    /**
+     * Create a new user account in the subscribers table
+     * @return bool
+     */
+    public function create() {
+        try {
+            // Generate API key
+            $this->sApiKey = bin2hex(random_bytes(32));
+
+            $query = "INSERT INTO {$this->table_name} 
+            (sApiKey, sFname, sLname, sEmail, sPhone, sPass, sReferal, sWallet, sRegStatus, sRegDate)
+            VALUES
+            (:sApiKey, :sFname, :sLname, :sEmail, :sPhone, :sPass, :sReferal, 0, 0, NOW())";
+
+            $stmt = $this->conn->prepare($query);
+
+            // Sanitize input
+            $this->sFname = htmlspecialchars(strip_tags($this->sFname));
+            $this->sLname = htmlspecialchars(strip_tags($this->sLname));
+            $this->sEmail = htmlspecialchars(strip_tags($this->sEmail));
+            $this->sPhone = htmlspecialchars(strip_tags($this->sPhone));
+            $this->sReferal = htmlspecialchars(strip_tags($this->sReferal));
+
+            // Hash the password using website-compatible hash
+            $password_hash = $this->computeWebsiteHash($this->sPass);
+
+            // Bind values
+            $stmt->bindParam(":sApiKey", $this->sApiKey);
+            $stmt->bindParam(":sFname", $this->sFname);
+            $stmt->bindParam(":sLname", $this->sLname);
+            $stmt->bindParam(":sEmail", $this->sEmail);
+            $stmt->bindParam(":sPhone", $this->sPhone);
+            $stmt->bindParam(":sPass", $password_hash);
+            $stmt->bindParam(":sReferal", $this->sReferal);
+
+            if($stmt->execute()) {
+                // Get the last inserted ID
+                $lastId = $this->conn->lastInsertId();
+                $this->sId = $lastId;
+
+                // Attempt to create virtual account but do not fail registration if it fails.
+                try {
+                    $this->createVirtualAccount(
+                        $lastId,
+                        $this->sFname,
+                        $this->sLname,
+                        $this->sPhone,
+                        $this->sEmail
+                    );
+                } catch (Exception $e) {
+                    // Log the error but continue; account can be generated later.
+                    error_log("Non-fatal: createVirtualAccount failed for sId={$lastId}: " . $e->getMessage());
+                }
+
+                // Registration succeeded regardless of virtual account creation outcome
+                return true;
+            }
+
+            return false;
+        } catch (Exception $e) {
+            error_log("Error in create: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function emailExists() {
         $query = "SELECT sId, sFname, sLname, sPass, sPhone, sWallet, sEmail, sRegStatus 
                 FROM " . $this->table_name . "
                 WHERE sEmail = ?

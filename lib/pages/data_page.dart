@@ -301,7 +301,7 @@ class _DataPageState extends State<DataPage> {
       };
 
       final uri = Uri.parse(
-        'https://api.bdudata.com/api/data-plans',
+        'https://api.mkdata.com.ng/api/data-plans',
       ).replace(queryParameters: queryParameters);
 
       final response = await http.get(uri);
@@ -1507,7 +1507,10 @@ class _DataPageState extends State<DataPage> {
                                   _selectedNetwork,
                                 )[0];
                               });
-                              _handleNetworkOrTypeChange();
+                              // Fetch data plans after state update
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                _handleNetworkOrTypeChange();
+                              });
                             }
                           : null,
                       child: Opacity(
@@ -1674,7 +1677,11 @@ class _DataPageState extends State<DataPage> {
                                         setState(
                                           () => _selectedPlanType = planType,
                                         );
-                                        _handleNetworkOrTypeChange();
+                                        // Fetch data plans after state update
+                                        WidgetsBinding.instance
+                                            .addPostFrameCallback((_) {
+                                              _handleNetworkOrTypeChange();
+                                            });
                                       }
                                     : null,
                               ),
@@ -1710,9 +1717,22 @@ class _DataPageState extends State<DataPage> {
                           ),
                         )
                       else
-                        ListView.builder(
+                        GridView.builder(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                childAspectRatio: 0.95,
+                                mainAxisSpacing: _getResponsiveSpacing(
+                                  context,
+                                  10,
+                                ),
+                                crossAxisSpacing: _getResponsiveSpacing(
+                                  context,
+                                  10,
+                                ),
+                              ),
                           itemCount: _dataPlans.length,
                           itemBuilder: (context, index) {
                             final plan = _dataPlans[index];
@@ -1730,81 +1750,166 @@ class _DataPageState extends State<DataPage> {
                                 }
                               },
                               child: Container(
-                                margin: EdgeInsets.only(
-                                  bottom: _getResponsiveSpacing(context, 12),
-                                ),
                                 padding: EdgeInsets.all(
-                                  _getResponsivePadding(context, 12),
+                                  _getResponsivePadding(context, 8),
                                 ),
                                 decoration: BoxDecoration(
                                   color: isSelected
-                                      ? const Color(
-                                          0xFFce4323,
-                                        ).withOpacity(0.08)
+                                      ? const Color(0xFFce4323)
                                       : Colors.white,
                                   border: Border.all(
                                     color: isSelected
                                         ? const Color(0xFFce4323)
-                                        : Colors.grey.shade300,
-                                    width: isSelected ? 2 : 1,
+                                        : Colors.grey.shade200,
+                                    width: isSelected ? 2.5 : 1.5,
                                   ),
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(16),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.grey.shade200,
-                                      blurRadius: 4,
+                                      color: isSelected
+                                          ? const Color(
+                                              0xFFce4323,
+                                            ).withOpacity(0.15)
+                                          : Colors.grey.shade100,
+                                      blurRadius: isSelected ? 8 : 4,
                                       offset: const Offset(0, 2),
+                                      spreadRadius: isSelected ? 1 : 0,
                                     ),
                                   ],
                                 ),
-                                child: Row(
+                                child: Column(
                                   mainAxisAlignment:
                                       MainAxisAlignment.spaceBetween,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            plan.name,
-                                            style: TextStyle(
-                                              fontSize: _getResponsiveFontSize(
-                                                context,
-                                                14,
-                                              ),
-                                              fontWeight: FontWeight.bold,
+                                    // Plan Name and Type
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          padding: EdgeInsets.symmetric(
+                                            horizontal: _getResponsivePadding(
+                                              context,
+                                              6,
+                                            ),
+                                            vertical: _getResponsivePadding(
+                                              context,
+                                              2,
                                             ),
                                           ),
-                                          SizedBox(
-                                            height: _getResponsiveSpacing(
-                                              context,
+                                          decoration: BoxDecoration(
+                                            color: isSelected
+                                                ? Colors.white.withOpacity(0.2)
+                                                : const Color(
+                                                    0xFFce4323,
+                                                  ).withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(
                                               4,
                                             ),
                                           ),
-                                          Text(
-                                            '${plan.validity} DAYS ✓',
+                                          child: Text(
+                                            plan.planType.toUpperCase(),
                                             style: TextStyle(
                                               fontSize: _getResponsiveFontSize(
                                                 context,
-                                                12,
+                                                10,
                                               ),
-                                              color: Colors.grey,
+                                              fontWeight: FontWeight.w600,
+                                              color: isSelected
+                                                  ? Colors.white
+                                                  : const Color(0xFFce4323),
+                                              letterSpacing: 0.5,
                                             ),
                                           ),
-                                        ],
-                                      ),
-                                    ),
-                                    Text(
-                                      '₦${plan.price.toStringAsFixed(0)}',
-                                      style: TextStyle(
-                                        fontSize: _getResponsiveFontSize(
-                                          context,
-                                          16,
                                         ),
-                                        fontWeight: FontWeight.bold,
-                                        color: const Color(0xFFce4323),
-                                      ),
+                                        SizedBox(
+                                          height: _getResponsiveSpacing(
+                                            context,
+                                            8,
+                                          ),
+                                        ),
+                                        Text(
+                                          plan.name,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: _getResponsiveFontSize(
+                                              context,
+                                              14,
+                                            ),
+                                            fontWeight: FontWeight.w700,
+                                            color: isSelected
+                                                ? Colors.white
+                                                : Colors.black87,
+                                            height: 1.3,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    // Validity and Price
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              Icons.schedule,
+                                              size: _getResponsiveIconSize(
+                                                context,
+                                                14,
+                                              ),
+                                              color: isSelected
+                                                  ? Colors.white.withOpacity(
+                                                      0.7,
+                                                    )
+                                                  : Colors.grey.shade500,
+                                            ),
+                                            SizedBox(
+                                              width: _getResponsiveSpacing(
+                                                context,
+                                                4,
+                                              ),
+                                            ),
+                                            Text(
+                                              '${plan.validity}d',
+                                              style: TextStyle(
+                                                fontSize:
+                                                    _getResponsiveFontSize(
+                                                      context,
+                                                      11,
+                                                    ),
+                                                color: isSelected
+                                                    ? Colors.white.withOpacity(
+                                                        0.8,
+                                                      )
+                                                    : Colors.grey.shade600,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        SizedBox(
+                                          height: _getResponsiveSpacing(
+                                            context,
+                                            6,
+                                          ),
+                                        ),
+                                        Text(
+                                          '₦${plan.price.toStringAsFixed(0)}',
+                                          style: TextStyle(
+                                            fontSize: _getResponsiveFontSize(
+                                              context,
+                                              17,
+                                            ),
+                                            fontWeight: FontWeight.bold,
+                                            color: isSelected
+                                                ? Colors.white
+                                                : const Color(0xFFce4323),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),

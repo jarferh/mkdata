@@ -7,6 +7,8 @@ import 'register_page.dart';
 import 'forgot_password_page.dart';
 import 'pin_setup_page.dart';
 import '../widgets/input_field.dart' as input_widgets;
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'dart:io' show Platform;
 import '../services/auth_service.dart';
 
 // Wave Clipper for the login page header
@@ -174,10 +176,33 @@ class _LoginPageState extends State<LoginPage> {
         return;
       }
 
-      // Step 4: Proceed with login
+      // Step 4: Obtain FCM token (best-effort) and proceed with login
+      String? fcmToken;
+      try {
+        fcmToken = await FirebaseMessaging.instance.getToken();
+      } catch (e) {
+        // Non-fatal: log and continue without token
+        debugPrint('FCM token retrieval failed: $e');
+        fcmToken = null;
+      }
+
+      String? platform;
+      try {
+        if (Platform.isAndroid)
+          platform = 'android';
+        else if (Platform.isIOS)
+          platform = 'ios';
+        else
+          platform = 'unknown';
+      } catch (e) {
+        platform = 'unknown';
+      }
+
       await _authService.login(
         _emailController.text.trim(),
         _passwordController.text,
+        fcmToken: fcmToken,
+        platform: platform,
       );
 
       if (mounted) {

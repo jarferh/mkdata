@@ -47,5 +47,16 @@
 		<true/>
 		<key>UIStatusBarHidden</key>
 		<false/>
+		
+		<!-- Enable background fetch and remote notifications for FCM -->
+		<key>UIBackgroundModes</key>
+		<array>
+			<string>fetch</string>
+			<string>remote-notification</string>
+		</array>
+
+		<!-- Keep method swizzling enabled for Firebase (do not set to NO) -->
+		<key>FirebaseAppDelegateProxyEnabled</key>
+		<true/>
 	</dict>
 </plist>

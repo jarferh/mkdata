@@ -50,7 +50,7 @@ class _DeleteAccountPageState extends State<DeleteAccountPage> {
 
       // Make API call to delete account
       final response = await http.post(
-        Uri.parse('https://api.bdudata.com/api/delete-account'),
+        Uri.parse('https://api.mkdata.com.ng/api/delete-account'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'userId': userId,

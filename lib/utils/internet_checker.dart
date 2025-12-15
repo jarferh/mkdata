@@ -14,7 +14,7 @@ class InternetChecker {
       }
       // lightweight probe
       final uri = Uri.parse('https://www.google.com/generate_204');
-      final resp = await http.get(uri).timeout(const Duration(seconds: 3));
+      final resp = await http.get(uri).timeout(const Duration(seconds: 4));
       if (resp.statusCode == 200 || resp.statusCode == 204) return true;
       _showNoInternet(context);
       return false;

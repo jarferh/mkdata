@@ -658,61 +658,61 @@ class _InvitePageState extends State<InvitePage> {
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
+              // const SizedBox(height: 16),
 
               // Referral Link
-              const Text(
-                'Referral Link',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade200, width: 1.5),
-                  borderRadius: BorderRadius.circular(16),
-                  color: Colors.grey.shade50,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Text(
-                          referralLink,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: primaryColor,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: primaryColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: IconButton(
-                        onPressed: () =>
-                            _copyToClipboard(referralLink, 'Referral link'),
-                        icon: const Icon(
-                          Icons.copy,
-                          color: primaryColor,
-                          size: 20,
-                        ),
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              // const Text(
+              //   'Referral Link',
+              //   style: TextStyle(
+              //     fontSize: 16,
+              //     fontWeight: FontWeight.bold,
+              //     color: Colors.black,
+              //   ),
+              // ),
+              // const SizedBox(height: 12),
+              // Container(
+              //   padding: const EdgeInsets.all(14),
+              //   decoration: BoxDecoration(
+              //     border: Border.all(color: Colors.grey.shade200, width: 1.5),
+              //     borderRadius: BorderRadius.circular(16),
+              //     color: Colors.grey.shade50,
+              //   ),
+              //   child: Row(
+              //     children: [
+              //       Expanded(
+              //         child: SingleChildScrollView(
+              //           scrollDirection: Axis.horizontal,
+              //           child: Text(
+              //             referralLink,
+              //             style: const TextStyle(
+              //               fontSize: 13,
+              //               color: primaryColor,
+              //               fontWeight: FontWeight.w500,
+              //             ),
+              //           ),
+              //         ),
+              //       ),
+              //       const SizedBox(width: 8),
+              //       Container(
+              //         decoration: BoxDecoration(
+              //           color: primaryColor.withOpacity(0.1),
+              //           borderRadius: BorderRadius.circular(10),
+              //         ),
+              //         child: IconButton(
+              //           onPressed: () =>
+              //               _copyToClipboard(referralLink, 'Referral link'),
+              //           icon: const Icon(
+              //             Icons.copy,
+              //             color: primaryColor,
+              //             size: 20,
+              //           ),
+              //           padding: const EdgeInsets.all(8),
+              //           constraints: const BoxConstraints(),
+              //         ),
+              //       ),
+              //     ],
+              //   ),
+              // ),
               const SizedBox(height: 24),
 
               // Withdraw Button

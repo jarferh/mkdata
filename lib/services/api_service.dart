@@ -546,6 +546,113 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> getCableProviders() async {
+    try {
+      final response = await _withTimeout(
+        _client.get(
+          Uri.parse('$baseUrl/api/cable-providers'),
+          headers: {'Content-Type': 'application/json'},
+        ),
+      );
+
+      return _handleResponse(response);
+    } catch (e) {
+      throw Exception('Failed to fetch cable providers: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> getCablePlans({String? providerId}) async {
+    try {
+      String url = '$baseUrl/api/cable-plans';
+      if (providerId != null) {
+        url += '?provider=$providerId';
+      }
+
+      final response = await _withTimeout(
+        _client.get(
+          Uri.parse(url),
+          headers: {'Content-Type': 'application/json'},
+        ),
+      );
+
+      return _handleResponse(response);
+    } catch (e) {
+      throw Exception('Failed to fetch cable plans: $e');
+    }
+  }
+
+  /// Purchase a cable subscription by calling the backend `cable-subscription` endpoint.
+  /// Expects the logged-in user to be present; verifies the stored transaction PIN before sending.
+  Future<Map<String, dynamic>> purchaseCable({
+    required String providerId,
+    required String planId,
+    required String iucNumber,
+    required String phoneNumber,
+    required String amount,
+    required String pin,
+  }) async {
+    try {
+      final userId = await getUserId();
+      print('Using user ID for cable purchase: $userId');
+
+      if (userId == null) {
+        throw Exception('User not logged in');
+      }
+
+      // Verify transaction PIN (client stores a copy in prefs)
+      final prefs = await _prefs;
+      final storedPin = prefs.getString('login_pin');
+      if (storedPin == null || storedPin != pin) {
+        throw Exception('Invalid transaction PIN');
+      }
+
+      final url = '$baseUrl/api/cable-subscription';
+      final body = {
+        'providerId': providerId,
+        'planId': planId,
+        'iucNumber': iucNumber,
+        'phoneNumber': phoneNumber,
+        'amount': amount,
+        'pin': pin,
+        'userId': userId,
+      };
+
+      print(
+        'Making cable purchase request to $url with body: ${jsonEncode(body)}',
+      );
+
+      final response = await _withTimeout(
+        _client.post(
+          Uri.parse(url),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        ),
+      );
+
+      print('Cable purchase response code: ${response.statusCode}');
+      print('Cable purchase response body: ${response.body}');
+
+      // If server returned validation details (400) or insufficient balance (402), parse and return them
+      if (response.statusCode == 400 || response.statusCode == 402) {
+        try {
+          final parsed = jsonDecode(response.body);
+          if (parsed is Map<String, dynamic>) {
+            final Map<String, dynamic> out = Map<String, dynamic>.from(parsed);
+            out['code'] = response.statusCode;
+            return out;
+          }
+          return {'status': 'error', 'message': response.body};
+        } catch (e) {
+          return {'status': 'error', 'message': response.body};
+        }
+      }
+
+      return _handleResponse(response);
+    } catch (e) {
+      throw Exception('Failed to purchase cable: $e');
+    }
+  }
+
   Future<Map<String, dynamic>> purchaseElectricity({
     required String meterNumber,
     required String providerId,
@@ -582,6 +689,37 @@ class ApiService {
           }),
         ),
       );
+
+      // If the server returned a 400 with validation details, parse and return
+      if (response.statusCode == 400) {
+        try {
+          final parsed = json.decode(response.body);
+          if (parsed is Map<String, dynamic>) {
+            // Include the HTTP status code so callers can distinguish validation
+            // responses from other error shapes.
+            final Map<String, dynamic> out = Map<String, dynamic>.from(parsed);
+            out['code'] = response.statusCode;
+            return out;
+          }
+        } catch (_) {
+          // fall through to handler
+        }
+      }
+
+      // If the server returned a 402 (Payment Required / Insufficient balance), parse and return
+      if (response.statusCode == 402) {
+        try {
+          final parsed = json.decode(response.body);
+          if (parsed is Map<String, dynamic>) {
+            // Attach the HTTP code so UI can treat 402 specially (user wallet insufficient)
+            final Map<String, dynamic> out = Map<String, dynamic>.from(parsed);
+            out['code'] = response.statusCode;
+            return out;
+          }
+        } catch (_) {
+          // fall through to handler
+        }
+      }
 
       return _handleResponse(response);
     } catch (e) {

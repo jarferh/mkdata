@@ -10,6 +10,19 @@ class CableService {
         $this->db = new Database();
     }
 
+    public function getCableProviders() {
+        try {
+            $query = "SELECT cId as id, cableid, provider, providerStatus as status 
+                     FROM cableid 
+                     WHERE providerStatus = 'On' 
+                     ORDER BY provider ASC";
+            
+            return $this->db->query($query);
+        } catch (Exception $e) {
+            throw new Exception("Error fetching cable providers: " . $e->getMessage());
+        }
+    }
+
     public function getCablePlans($providerId = null) {
         try {
             $query = "SELECT cp.*, c.provider as providerName 
@@ -295,8 +308,8 @@ class CableService {
             }
 
             // 3. Process the transaction
-            // Start transaction
-            $this->db->beginTransaction();
+            // Start transaction using the underlying PDO connection
+            $this->db->getConnection()->beginTransaction();
 
             try {
                 // Get current balance again within transaction
@@ -323,8 +336,8 @@ class CableService {
                     [1, $transRef, $serviceDesc, $amount, $oldBalance, $newBalance] // Using 1 as default sId for now
                 );
                 
-                // Get the last inserted ID
-                $transactionId = $this->db->query("SELECT LAST_INSERT_ID() as id")[0]['id'];
+                // Get the last inserted ID using the database helper
+                $transactionId = $this->db->lastInsertId();
 
                 // Get provider configuration
                 $providerDetails = $this->getCableProviderDetails();
@@ -357,14 +370,26 @@ class CableService {
                         'cable' => $providerId,
                         'iuc' => $iucNumber,
                         'cable_plan' => $planId,
-                        'bypass' => false
+                        'bypass' => true
                     ]);
                 } else {
                     $postData = json_encode([
                         'cablename' => $cableProvider,
+                        'cable' => $providerId,
+                        // Include multiple common keys some providers expect
                         'smart_card_number' => $iucNumber,
+                        'iuc' => $iucNumber,
+                        'decoder_number' => $iucNumber,
+                        // Provide several aliases for the cable plan field to satisfy various providers
                         'cableplan' => $planId,
-                        'reference' => $transRef
+                        'cable_plan' => $planId,
+                        'plan' => $planId,
+                        'plan_id' => $planId,
+                        'reference' => $transRef,
+                        // Some providers (e.g., n3tdata variants) require a bypass field
+                        'bypass' => false,
+                        // Some providers expect 'request-id' as the transaction reference
+                        'request-id' => $transRef
                     ]);
                 }
 
@@ -435,8 +460,8 @@ class CableService {
                     [$dbStatus, $result ? json_encode($result) : null, $responseData, $transactionId]
                 );
 
-                // Commit transaction
-                $this->db->commit();
+                // Commit transaction using the underlying PDO connection
+                $this->db->getConnection()->commit();
 
                 if ($status === 'FAILED') {
                     // Restore user's wallet balance if transaction failed
@@ -461,8 +486,15 @@ class CableService {
                 ];
 
             } catch (Exception $e) {
-                // Rollback transaction on error
-                $this->db->rollback();
+                // Rollback transaction on error using PDO if a transaction is active
+                try {
+                    $conn = $this->db->getConnection();
+                    if ($conn instanceof PDO && $conn->inTransaction()) {
+                        $conn->rollBack();
+                    }
+                } catch (Exception $__rollEx) {
+                    error_log('Rollback failed: ' . $__rollEx->getMessage());
+                }
                 throw $e;
             }
 

@@ -8,7 +8,7 @@ use PDOException;
 use Binali\Config\Database;
 use Binali\Config\Config;
 
-class DataPinService {class DataPinService {
+class DataPinService {
     private $db;
     private $config;
 

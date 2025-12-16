@@ -467,9 +467,9 @@ class _RegisterPageState extends State<RegisterPage> {
 
       String? platform;
       try {
-        if (Platform.isAndroid)
+        if (Platform.isAndroid) {
           platform = 'android';
-        else if (Platform.isIOS)
+        } else if (Platform.isIOS)
           platform = 'ios';
         else
           platform = 'unknown';

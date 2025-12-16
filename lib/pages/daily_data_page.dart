@@ -158,7 +158,7 @@ class _DailyDataPageState extends State<DailyDataPage> {
   final FocusNode _phoneFocusNode = FocusNode();
   String? _phoneError;
   bool _phoneValid = false;
-  bool _isProcessing = false;
+  final bool _isProcessing = false;
   StreamSubscription? _connectivitySubscription;
   bool _isPinLoadingShown = false;
 

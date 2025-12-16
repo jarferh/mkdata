@@ -188,9 +188,9 @@ class _LoginPageState extends State<LoginPage> {
 
       String? platform;
       try {
-        if (Platform.isAndroid)
+        if (Platform.isAndroid) {
           platform = 'android';
-        else if (Platform.isIOS)
+        } else if (Platform.isIOS)
           platform = 'ios';
         else
           platform = 'unknown';

@@ -44,6 +44,9 @@ class ElectricityService {
 
     public function purchaseElectricity($meterNumber, $providerId, $amount, $meterType = 'prepaid', $phone = '') {
         try {
+            // Debug: Log incoming parameters
+            error_log("purchaseElectricity() called with: meter={$meterNumber}, provider={$providerId}, amount={$amount}, type={$meterType}, phone={$phone}");
+            
             // Get the provider information
             $query = "SELECT provider, abbreviation FROM electricityid WHERE eId = ?";
             $provider = $this->db->query($query, [$providerId]);
@@ -68,19 +71,22 @@ class ElectricityService {
                 throw new Exception("Purchase API key not configured");
             }
 
-            // Build URL with query parameters
-            $queryParams = http_build_query([
+            // Build the request payload as JSON
+            $payload = json_encode([
                 'meternumber' => $meterNumber,
                 'disconame' => $provider['abbreviation'],
                 'mtype' => strtolower($meterType),
                 'amount' => $amount,
                 'phone' => $phone
             ]);
-            $url = $baseUrl . '?' . $queryParams;
+
+            // Debug: Log the URL being sent
+            error_log("Sending purchase request to provider: {$baseUrl}");
+            error_log("Payload: {$payload}");
 
             $curl = curl_init();
             curl_setopt_array($curl, array(
-                CURLOPT_URL => $url,
+                CURLOPT_URL => $baseUrl,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_ENCODING => '',
                 CURLOPT_MAXREDIRS => 10,
@@ -88,6 +94,7 @@ class ElectricityService {
                 CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                 CURLOPT_CUSTOMREQUEST => 'POST',
+                CURLOPT_POSTFIELDS => $payload,
                 CURLOPT_HTTPHEADER => array(
                     'Authorization: Token ' . $apiKey,
                     'Content-Type: application/json'
@@ -98,31 +105,84 @@ class ElectricityService {
             $err = curl_error($curl);
             curl_close($curl);
 
+            // Debug: Log the provider response
+            error_log("Provider response (raw): {$response}");
+
             if ($err) {
                 throw new Exception("cURL Error: " . $err);
             }
 
             $result = json_decode($response, true);
 
-            if ($result) {
-                return array(
-                    'status' => 'success',
-                    'data' => array(
-                        'token' => $result['token'] ?? null,
-                        'units' => $result['units'] ?? null,
-                        'amount' => $result['amount'] ?? $amount,
-                        'meter_number' => $meterNumber,
-                        'provider' => $provider['provider'],
-                        'reference' => $result['reference'] ?? null,
-                        'message' => $result['message'] ?? 'Purchase successful'
-                    )
-                );
-            } else {
+            // If we didn't get a JSON response, consider it an error
+            if (!$result || !is_array($result)) {
                 return array(
                     'status' => 'error',
-                    'message' => 'Failed to process electricity purchase'
+                    'message' => 'Failed to process electricity purchase: invalid response from provider',
+                    'raw' => $response
                 );
             }
+
+            // Detect common provider-side validation errors or explicit failure flags
+            $hasProviderError = false;
+            $errorMessages = [];
+
+            if (isset($result['status']) && !empty($result['status']) && !in_array(strtolower((string)$result['status']), ['success', 'ok', 'true'], true)) {
+                $hasProviderError = true;
+                $errorMessages[] = is_string($result['message'] ?? '') ? $result['message'] : '';
+            }
+
+            if (isset($result['error'])) {
+                $hasProviderError = true;
+                if (is_array($result['error'])) {
+                    $errorMessages = array_merge($errorMessages, $result['error']);
+                } else {
+                    $errorMessages[] = (string)$result['error'];
+                }
+            }
+
+            if (isset($result['errors']) && is_array($result['errors'])) {
+                $hasProviderError = true;
+                // flatten nested error arrays
+                foreach ($result['errors'] as $k => $v) {
+                    if (is_array($v)) {
+                        $errorMessages = array_merge($errorMessages, $v);
+                    } else {
+                        $errorMessages[] = (string)$v;
+                    }
+                }
+            }
+
+            // Some providers return validation messages keyed by field (e.g., amount => ["This field is required."])
+            if (!empty($result['amount']) && is_array($result['amount'])) {
+                $hasProviderError = true;
+                foreach ($result['amount'] as $m) {
+                    $errorMessages[] = (string)$m;
+                }
+            }
+
+            if ($hasProviderError) {
+                // Return an error with provider details so router can set proper HTTP code
+                return array(
+                    'status' => 'error',
+                    'message' => implode('; ', array_filter($errorMessages)) ?: ($result['message'] ?? 'Provider reported an error'),
+                    'data' => $result
+                );
+            }
+
+            // Otherwise treat as success and return normalized data
+            return array(
+                'status' => 'success',
+                'data' => array(
+                    'token' => $result['token'] ?? null,
+                    'units' => $result['units'] ?? null,
+                    'amount' => $result['amount'] ?? $amount,
+                    'meter_number' => $meterNumber,
+                    'provider' => $provider['provider'],
+                    'reference' => $result['reference'] ?? null,
+                    'message' => $result['message'] ?? 'Purchase successful'
+                )
+            );
 
         } catch (Exception $e) {
             throw new Exception("Error purchasing electricity: " . $e->getMessage());
@@ -244,9 +304,10 @@ class ElectricityService {
             error_log("Decoded Response: " . print_r($result, true));
 
             if (!$result || !is_array($result)) {
+                error_log("Meter validation: invalid or empty response from provider: " . var_export($response, true));
                 return array(
                     'status' => 'error',
-                    'message' => 'Failed to get response from validation service'
+                    'message' => 'fail to validate meter'
                 );
             }
 
@@ -266,9 +327,10 @@ class ElectricityService {
             $hasRequiredData = !empty($name);
 
             if ($isInvalid || !$hasRequiredData) {
+                error_log("Meter validation: provider reported invalid or incomplete data: " . var_export($d, true));
                 return array(
                     'status' => 'error',
-                    'message' => $isInvalid ? 'Invalid meter number' : 'Incomplete meter information received'
+                    'message' => 'fail to validate meter'
                 );
             }
 
@@ -284,7 +346,12 @@ class ElectricityService {
             );
 
         } catch (Exception $e) {
-            throw new Exception("Error validating meter number: " . $e->getMessage());
+            // Log detailed exception server-side but return a generic message to the client
+            error_log("Exception in validateMeterNumber: " . $e->getMessage());
+            return array(
+                'status' => 'error',
+                'message' => 'fail to validate meter'
+            );
         }
     }
 }

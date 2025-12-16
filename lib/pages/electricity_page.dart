@@ -20,6 +20,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
   final _meterController = TextEditingController();
   final _phoneController = TextEditingController();
   final _amountController = TextEditingController();
+  String? _amountError;
   final _pinController = TextEditingController();
   final _meterFocusNode = FocusNode();
   final _phoneFocusNode = FocusNode();
@@ -602,6 +603,95 @@ class _ElectricityPageState extends State<ElectricityPage> {
     );
   }
 
+  Future<void> _validateMeter() async {
+    if (_selectedProvider == null) {
+      _showErrorModal('No Provider Selected', 'Please select a biller first.');
+      return;
+    }
+
+    final meter = _meterController.text.trim();
+    if (meter.isEmpty) {
+      _showErrorModal(
+        'Meter Required',
+        'Please enter a meter number to validate.',
+      );
+      return;
+    }
+
+    if (!_hasInternet) {
+      _showErrorModal(
+        'No Internet',
+        'Please connect to the internet and try again.',
+      );
+      return;
+    }
+
+    // Show a simple loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final result = await _apiService.validateMeterNumber(
+        meterNumber: meter,
+        providerId: _selectedProvider!.id.toString(),
+        meterType: _selectedType.toLowerCase(),
+      );
+
+      Navigator.pop(context); // dismiss loading
+
+      if (result['status'] == 'success' || result['status'] == 'processing') {
+        setState(() {
+          _isValidated = true;
+        });
+
+        final name = result['data']?['name'] ?? '';
+        final address = result['data']?['address'] ?? '';
+
+        final message = name.isNotEmpty
+            ? 'Meter validated: $name${address.isNotEmpty ? ' - $address' : ''}'
+            : (result['message'] ?? 'Meter validated successfully');
+
+        _showSimpleMessage('Meter Validated', message);
+      } else {
+        setState(() {
+          _isValidated = false;
+        });
+        _showErrorModal(
+          'Validation Failed',
+          result['message'] ?? 'Invalid meter number',
+        );
+      }
+    } catch (e) {
+      Navigator.pop(context);
+      setState(() {
+        _isValidated = false;
+      });
+      _showErrorModal(
+        'Validation Error',
+        'An error occurred while validating the meter. Please try again.',
+      );
+    }
+  }
+
+  void _showSimpleMessage(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPinButton(
     String label,
     VoidCallback onPressed, {
@@ -659,6 +749,14 @@ class _ElectricityPageState extends State<ElectricityPage> {
         return;
       }
 
+      // Debug: Log the values being sent
+      print('DEBUG: Purchasing electricity with:');
+      print('  Meter: ${_meterController.text}');
+      print('  Provider ID: ${_selectedProvider!.id}');
+      print('  Amount: ${_amountController.text}');
+      print('  Type: ${_selectedType.toLowerCase()}');
+      print('  Phone: ${_phoneController.text}');
+
       final response = await _apiService.purchaseElectricity(
         meterNumber: _meterController.text,
         providerId: _selectedProvider!.id,
@@ -668,41 +766,128 @@ class _ElectricityPageState extends State<ElectricityPage> {
         phone: _phoneController.text,
       );
 
-      if (response['success'] == true || response['status'] == 'success') {
-        if (!mounted) return;
+      // Ensure we have an amount string to pass downstream
+      final amountStr = _amountController.text.isNotEmpty
+          ? _amountController.text
+          : '0.00';
 
-        final status = response['status'] ?? 'success';
-        final transactionId = response['data']?['transactionId'] ?? '';
+      // Normalize response and detect insufficient balance
+      String status = 'failed';
+      String transactionId = '';
 
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => TransactionDetailsPage(
-              initialStatus: status,
-              transactionId: transactionId,
-              amount: _amountController.text,
-              phoneNumber: _meterController.text,
-              network: _selectedProvider?.name ?? '',
-              planName: 'Electricity - $_selectedType',
-              transactionDate: DateTime.now().toString(),
-              planValidity: 'N/A',
-              playOnOpen: false,
-            ),
-          ),
-        );
+      if (response != null) {
+        final code =
+            (response['code'] ??
+            response['statusCode'] ??
+            response['status_code'] ??
+            response['httpCode'] ??
+            response['http_status']);
 
-        if (status == 'success') {
-          _meterController.clear();
-          _amountController.clear();
-          _pinController.clear();
-          _phoneController.clear();
-          setState(() => _isValidated = false);
+        // Consider the response as user-wallet insufficient only when the
+        // API explicitly indicates it (HTTP 402 or an explicit error_type).
+        // Avoid treating provider-side messages that mention "insufficient"
+        // (which may refer to the provider's own balance) as a user-wallet issue.
+        final isInsufficient =
+            (code != null && code.toString() == '402') ||
+            (response['error_type']?.toString() == 'user_insufficient');
+
+        if (isInsufficient) {
+          // Try to extract balances from response data
+          String currentBalance = '';
+          String requiredAmount = '';
+          if (response['data'] is Map) {
+            currentBalance =
+                (response['data']['current_balance']?.toString() ??
+                response['data']['balance']?.toString() ??
+                '');
+            requiredAmount =
+                (response['data']['required_amount']?.toString() ??
+                response['data']['needed']?.toString() ??
+                '');
+          }
+
+          String details =
+              'Your wallet balance is insufficient to complete this purchase.';
+          if (currentBalance.isNotEmpty || requiredAmount.isNotEmpty) {
+            details =
+                'Current balance: ${currentBalance.isNotEmpty ? currentBalance : 'N/A'}\nRequired: ${requiredAmount.isNotEmpty ? requiredAmount : amountStr}';
+          }
+
+          if (!mounted) return;
+          _showErrorModal('Insufficient Balance', details);
+          setState(() => _isProcessing = false);
+          return;
         }
+
+        final rawStatus = (response['status'] ?? '').toString().toLowerCase();
+        if (rawStatus.contains('success')) {
+          status = 'success';
+        } else if (rawStatus.contains('process') ||
+            rawStatus.contains('pending')) {
+          status = 'processing';
+        } else {
+          status = 'failed';
+        }
+
+        if (response['data'] != null && response['data'] is Map) {
+          transactionId =
+              (response['data']['transactionId']?.toString() ??
+              response['data']['transaction_id']?.toString() ??
+              '');
+        }
+
+        if (transactionId.isEmpty) {
+          transactionId =
+              (response['transactionId']?.toString() ??
+              response['transaction_id']?.toString() ??
+              '');
+        }
+      }
+
+      if (!mounted) return;
+
+      // Always open TransactionDetailsPage so user can inspect the outcome
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => TransactionDetailsPage(
+            initialStatus: status,
+            transactionId: transactionId,
+            amount: amountStr,
+            phoneNumber: _meterController.text,
+            network: _selectedProvider?.name ?? '',
+            planName: 'Electricity - $_selectedType',
+            transactionDate: DateTime.now().toString(),
+            planValidity: 'N/A',
+            playOnOpen: false,
+          ),
+        ),
+      );
+
+      if (status == 'success') {
+        _meterController.clear();
+        _amountController.clear();
+        _pinController.clear();
+        _phoneController.clear();
+        setState(() => _isValidated = false);
       } else {
-        _showErrorModal(
-          'Transaction Failed',
-          response['message'] ?? 'An error occurred during the transaction.',
-        );
+        // If failed or other, surface validation-like errors alongside the details page
+        setState(() {
+          _amountError = null;
+        });
+
+        if (response != null &&
+            response['data'] != null &&
+            response['data'] is Map) {
+          final data = response['data'] as Map;
+          if (data.containsKey('amount') &&
+              data['amount'] is List &&
+              data['amount'].isNotEmpty) {
+            setState(() {
+              _amountError = data['amount'][0].toString();
+            });
+          }
+        }
       }
     } catch (e) {
       _showErrorModal(
@@ -928,6 +1113,42 @@ class _ElectricityPageState extends State<ElectricityPage> {
                   ),
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 44,
+                        child: ElevatedButton(
+                          onPressed: _isProcessing || !_hasInternet
+                              ? null
+                              : () async {
+                                  await _validateMeter();
+                                },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _isValidated
+                                ? Colors.green
+                                : const Color(0xFFce4323),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            _isValidated ? 'Verified' : 'Verify Meter',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (_isValidated)
+                      Icon(Icons.check_circle, color: Colors.green.shade700),
+                  ],
+                ),
                 const SizedBox(height: 16),
                 const Text(
                   'Amount',
@@ -968,6 +1189,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
                       horizontal: 12,
                       vertical: 12,
                     ),
+                    errorText: _amountError,
                     prefixText: '₦ ',
                   ),
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],

@@ -14,7 +14,6 @@ use Binali\Models\User;
 use Binali\Config\Database;
 use PDO;
 use PDOException;
-use Exception;
 use PHPMailer\PHPMailer\PHPMailer;
 
 
@@ -396,6 +395,13 @@ try {
             }
             break;
 
+        case 'cable-providers':
+            $service = new CableService();
+            $response['data'] = $service->getCableProviders();
+            $response['status'] = 'success';
+            $response['message'] = 'Cable providers fetched successfully';
+            break;
+
         case 'cable-plans':
             $service = new CableService();
             $providerId = isset($_GET['provider']) ? $_GET['provider'] : null;
@@ -454,6 +460,33 @@ try {
                 throw new Exception("Missing required parameters");
             }
 
+            // Check if userId is provided for balance verification
+            $userId = $data->userId ?? null;
+            if (!empty($userId)) {
+                // Fetch user wallet balance
+                $dbBalance = new Database();
+                $userQuery = "SELECT sWallet FROM subscribers WHERE sId = ?";
+                $userResult = $dbBalance->query($userQuery, [$userId]);
+                
+                if (!empty($userResult)) {
+                    $userWallet = (float)($userResult[0]['sWallet'] ?? 0);
+                    $amount = (float)$data->amount;
+                    
+                    if ($userWallet < $amount) {
+                        http_response_code(402); // 402 Payment Required
+                        echo json_encode([
+                            'status' => 'error',
+                            'message' => 'Insufficient balance. Your wallet balance is ₦' . number_format($userWallet, 2),
+                            'data' => [
+                                'current_balance' => $userWallet,
+                                'required_amount' => $amount
+                            ]
+                        ]);
+                        exit();
+                    }
+                }
+            }
+
             $service = new ElectricityService();
             $svcResult = $service->purchaseElectricity(
                 $data->meterNumber,
@@ -468,7 +501,20 @@ try {
             $response['data'] = $svcResult['data'] ?? null;
 
             if ($response['status'] === 'error' || $response['status'] === 'failed') {
-                http_response_code(500);
+                // Distinguish validation-like errors (field errors returned by provider)
+                // from internal/server errors. If the service included a data object
+                // with field-level error arrays (e.g., 'amount' => ['...']), return 400.
+                $isValidationError = false;
+                if (isset($svcResult['data']) && is_array($svcResult['data'])) {
+                    foreach ($svcResult['data'] as $k => $v) {
+                        if (is_array($v) && !empty($v)) {
+                            $isValidationError = true;
+                            break;
+                        }
+                    }
+                }
+
+                http_response_code($isValidationError ? 400 : 500);
             } else {
                 http_response_code(200);
             }
@@ -504,8 +550,37 @@ try {
                 throw new Exception('Missing required parameters');
             }
 
+            // If userId supplied, verify wallet balance before attempting purchase
+            $userId = $data->userId ?? null;
+            if (!empty($userId)) {
+                try {
+                    $dbCheck = new Database();
+                    $userRow = $dbCheck->query("SELECT sWallet FROM subscribers WHERE sId = ? LIMIT 1", [$userId]);
+                    if (!empty($userRow) && isset($userRow[0]['sWallet'])) {
+                        $userWallet = (float)$userRow[0]['sWallet'];
+                        $amount = (float)$data->amount;
+                        if ($userWallet < $amount) {
+                            http_response_code(402); // Payment Required
+                            echo json_encode([
+                                'status' => 'error',
+                                'message' => 'Insufficient balance. Your wallet balance is ₦' . number_format($userWallet, 2),
+                                'data' => [
+                                    'current_balance' => $userWallet,
+                                    'required_amount' => $amount
+                                ]
+                            ]);
+                            exit();
+                        }
+                    }
+                } catch (Exception $e) {
+                    error_log('Error checking wallet balance for cable-subscription: ' . $e->getMessage());
+                    // Fall through to attempt purchase; do not silently block users if DB check fails
+                }
+            }
+
+            // Call the real CableService to perform the subscription
             $service = new CableService();
-            $response['data'] = $service->processCableSubscription(
+            $svcResult = $service->processCableSubscription(
                 $data->providerId,
                 $data->planId,
                 $data->iucNumber,
@@ -513,21 +588,47 @@ try {
                 $data->amount,
                 $data->pin
             );
-            $response['status'] = 'success';
-            $response['message'] = 'Cable subscription processed successfully';
 
-            // Send push notification
-            sendTransactionNotification(
-                userId: (string)$data->userId,
-                transactionType: 'cable',
-                transactionData: [
-                    'transaction_id' => $response['data']['ref'] ?? 'N/A',
-                    'amount' => $data->amount,
-                    'provider_id' => $data->providerId,
-                    'plan_id' => $data->planId,
-                    'iuc_number' => $data->iucNumber
-                ]
-            );
+            // Normalize and propagate the service response
+            $response['data'] = $svcResult['data'] ?? $svcResult;
+            $response['message'] = $svcResult['message'] ?? '';
+            $response['status'] = $svcResult['status'] ?? 'failed';
+
+            // Send push notification only when successful or processing
+            if ($response['status'] === 'success' || $response['status'] === 'processing') {
+                try {
+                    sendTransactionNotification(
+                        userId: (string)$data->userId,
+                        transactionType: 'cable',
+                        transactionData: [
+                            'transaction_id' => $response['data']['ref'] ?? ($svcResult['data']['ref'] ?? 'N/A'),
+                            'amount' => $data->amount,
+                            'provider_id' => $data->providerId,
+                            'plan_id' => $data->planId,
+                            'iuc_number' => $data->iucNumber
+                        ]
+                    );
+                } catch (Exception $e) {
+                    error_log('Warning: failed to send cable transaction notification: ' . $e->getMessage());
+                }
+            }
+
+            // Map service error types to HTTP codes: validation-like errors => 400, otherwise 500
+            if ($response['status'] === 'failed' || $response['status'] === 'error') {
+                $isValidationError = false;
+                if (isset($svcResult['data']) && is_array($svcResult['data'])) {
+                    foreach ($svcResult['data'] as $k => $v) {
+                        if (is_array($v) && !empty($v)) {
+                            $isValidationError = true;
+                            break;
+                        }
+                    }
+                }
+                http_response_code($isValidationError ? 400 : 500);
+            } else {
+                http_response_code(200);
+            }
+
             break;
 
         case 'exam-providers':

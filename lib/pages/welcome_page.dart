@@ -5,7 +5,6 @@ import 'package:local_auth/local_auth.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:http/http.dart' as http;
 import '../utils/network_utils.dart';
 
 class WelcomePage extends StatefulWidget {

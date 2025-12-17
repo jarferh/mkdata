@@ -80,5 +80,44 @@ if (!class_exists('Binali\Config\Database')) {
             throw new Exception("Failed to get last insert ID");
         }
     }
+
+    public function beginTransaction() {
+        try {
+            error_log("Beginning database transaction");
+            return $this->conn->beginTransaction();
+        } catch(PDOException $e) {
+            error_log("BeginTransaction Error: " . $e->getMessage());
+            throw new Exception("Failed to begin transaction: " . $e->getMessage());
+        }
+    }
+
+    public function commit() {
+        try {
+            error_log("Committing database transaction");
+            return $this->conn->commit();
+        } catch(PDOException $e) {
+            error_log("Commit Error: " . $e->getMessage());
+            throw new Exception("Failed to commit transaction: " . $e->getMessage());
+        }
+    }
+
+    public function rollBack() {
+        try {
+            error_log("Rolling back database transaction");
+            return $this->conn->rollBack();
+        } catch(PDOException $e) {
+            error_log("Rollback Error: " . $e->getMessage());
+            throw new Exception("Failed to rollback transaction: " . $e->getMessage());
+        }
+    }
+
+    public function inTransaction() {
+        try {
+            return $this->conn->inTransaction();
+        } catch(PDOException $e) {
+            error_log("InTransaction Error: " . $e->getMessage());
+            return false;
+        }
+    }
 }
 }

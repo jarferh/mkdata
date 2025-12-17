@@ -253,8 +253,8 @@ try {
             $response['message'] = $svcResult['message'] ?? '';
             $response['status'] = $svcResult['status'] ?? 'failed';
 
-            // Send push notification on success
-            if ($response['status'] === 'success' || $response['status'] === 'processing') {
+            // Send push notification for all attempts (success and failure)
+            try {
                 sendTransactionNotification(
                     userId: (string)$data->user_id,
                     transactionType: 'airtime',
@@ -262,9 +262,12 @@ try {
                         'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
                         'amount' => $data->amount,
                         'network' => $networkForService,
-                        'phone' => $data->phone
+                        'phone' => $data->phone,
+                        'status' => $response['status']
                     ]
                 );
+            } catch (Exception $e) {
+                error_log('Notification error (non-blocking): ' . $e->getMessage());
             }
 
             // Set HTTP response code based on service status
@@ -372,8 +375,8 @@ try {
             $response['message'] = $svcResult['message'] ?? '';
             $response['status'] = $svcResult['status'] ?? 'failed';
 
-            // Send push notification on success
-            if ($response['status'] === 'success' || $response['status'] === 'processing') {
+            // Send push notification for all attempts (success and failure)
+            try {
                 sendTransactionNotification(
                     userId: (string)$userId,
                     transactionType: 'data',
@@ -381,9 +384,12 @@ try {
                         'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
                         'plan_id' => $planId,
                         'network' => $networkId,
-                        'phone' => $phone
+                        'phone' => $phone,
+                        'status' => $response['status']
                     ]
                 );
+            } catch (Exception $e) {
+                error_log('Notification error (non-blocking): ' . $e->getMessage());
             }
 
             // Set HTTP response code based on service status
@@ -500,6 +506,23 @@ try {
             $response['message'] = $svcResult['message'] ?? '';
             $response['data'] = $svcResult['data'] ?? null;
 
+            // Send push notification for all attempts (success and failure)
+            try {
+                sendTransactionNotification(
+                    userId: (string)$data->userId,
+                    transactionType: 'electricity',
+                    transactionData: [
+                        'meter_number' => $data->meterNumber,
+                        'provider_id' => $data->providerId,
+                        'amount' => $data->amount,
+                        'meter_type' => $data->meterType ?? 'prepaid',
+                        'status' => $response['status']
+                    ]
+                );
+            } catch (Exception $e) {
+                error_log('Notification error (non-blocking): ' . $e->getMessage());
+            }
+
             if ($response['status'] === 'error' || $response['status'] === 'failed') {
                 // Distinguish validation-like errors (field errors returned by provider)
                 // from internal/server errors. If the service included a data object
@@ -594,23 +617,22 @@ try {
             $response['message'] = $svcResult['message'] ?? '';
             $response['status'] = $svcResult['status'] ?? 'failed';
 
-            // Send push notification only when successful or processing
-            if ($response['status'] === 'success' || $response['status'] === 'processing') {
-                try {
-                    sendTransactionNotification(
-                        userId: (string)$data->userId,
-                        transactionType: 'cable',
-                        transactionData: [
-                            'transaction_id' => $response['data']['ref'] ?? ($svcResult['data']['ref'] ?? 'N/A'),
-                            'amount' => $data->amount,
-                            'provider_id' => $data->providerId,
-                            'plan_id' => $data->planId,
-                            'iuc_number' => $data->iucNumber
-                        ]
-                    );
-                } catch (Exception $e) {
-                    error_log('Warning: failed to send cable transaction notification: ' . $e->getMessage());
-                }
+            // Send push notification for all attempts (success and failure)
+            try {
+                sendTransactionNotification(
+                    userId: (string)$data->userId,
+                    transactionType: 'cable',
+                    transactionData: [
+                        'transaction_id' => $response['data']['ref'] ?? ($svcResult['data']['ref'] ?? 'N/A'),
+                        'amount' => $data->amount,
+                        'provider_id' => $data->providerId,
+                        'plan_id' => $data->planId,
+                        'iuc_number' => $data->iucNumber,
+                        'status' => $response['status']
+                    ]
+                );
+            } catch (Exception $e) {
+                error_log('Notification error (non-blocking): ' . $e->getMessage());
             }
 
             // Map service error types to HTTP codes: validation-like errors => 400, otherwise 500
@@ -657,6 +679,60 @@ try {
             $response['status'] = $result['status'];
             $response['message'] = $result['message'];
             $response['data'] = $result['data'];
+
+            // Send notification for transaction attempts (success or error)
+            try {
+                sendTransactionNotification(
+                    userId: (string)$data->userId,
+                    transactionType: 'exam_pin',
+                    transactionData: [
+                        'examId' => $data->examId,
+                        'quantity' => $data->quantity,
+                        'amount' => $result['data']['amount'] ?? 0,
+                        'reference' => $result['data']['reference'] ?? '',
+                        'status' => $response['status']
+                    ]
+                );
+            } catch (Exception $e) {
+                error_log('Notification error (non-blocking): ' . $e->getMessage());
+            }
+            break;
+
+        case 'purchase-recharge-pin':
+            if ($requestMethod !== 'POST') {
+                throw new Exception('Method not allowed');
+            }
+
+            $data = json_decode(file_get_contents("php://input"));
+            error_log("Card PIN purchase request data: " . print_r($data, true));
+
+            if (!isset($data->planId) || !isset($data->quantity) || !isset($data->userId) || !isset($data->pin)) {
+                throw new Exception('Missing required parameters: planId, quantity, userId, pin');
+            }
+
+            $service = new RechargePinService();
+            $result = $service->purchaseRechargePin($data->planId, $data->quantity, $data->userId, $data->pin);
+
+            $response['status'] = $result['status'];
+            $response['message'] = $result['message'];
+            $response['data'] = $result['data'];
+
+            // Send notification for transaction attempts (success or error)
+            try {
+                sendTransactionNotification(
+                    userId: (string)$data->userId,
+                    transactionType: 'card_pin',
+                    transactionData: [
+                        'network' => $data->planId,
+                        'quantity' => $data->quantity,
+                        'amount' => $result['data']['amount'] ?? 0,
+                        'reference' => $result['data']['reference'] ?? '',
+                        'status' => $response['status']
+                    ]
+                );
+            } catch (Exception $e) {
+                error_log('Notification error (non-blocking): ' . $e->getMessage());
+            }
             break;
 
         case 'recharge-card-plans':
@@ -725,6 +801,23 @@ try {
                 $response['status'] = $result['status'];
                 $response['message'] = $result['message'];
                 $response['data'] = $result['data'];
+
+                // Send notification for transaction attempts (success or error)
+                try {
+                    sendTransactionNotification(
+                        userId: (string)$data->userId,
+                        transactionType: 'data_pin',
+                        transactionData: [
+                            'planName' => $data->plan,
+                            'quantity' => $data->quantity,
+                            'amount' => $result['data']['amount'] ?? 0,
+                            'reference' => $result['data']['reference'] ?? '',
+                            'status' => $response['status']
+                        ]
+                    );
+                } catch (Exception $e) {
+                    error_log('Notification error (non-blocking): ' . $e->getMessage());
+                }
             } catch (Exception $e) {
                 error_log("Error in data pin purchase: " . $e->getMessage());
                 http_response_code(500);

@@ -775,75 +775,73 @@ class _ElectricityPageState extends State<ElectricityPage> {
       String status = 'failed';
       String transactionId = '';
 
-      if (response != null) {
-        final code =
-            (response['code'] ??
-            response['statusCode'] ??
-            response['status_code'] ??
-            response['httpCode'] ??
-            response['http_status']);
+      final code =
+          (response['code'] ??
+          response['statusCode'] ??
+          response['status_code'] ??
+          response['httpCode'] ??
+          response['http_status']);
 
-        // Consider the response as user-wallet insufficient only when the
-        // API explicitly indicates it (HTTP 402 or an explicit error_type).
-        // Avoid treating provider-side messages that mention "insufficient"
-        // (which may refer to the provider's own balance) as a user-wallet issue.
-        final isInsufficient =
-            (code != null && code.toString() == '402') ||
-            (response['error_type']?.toString() == 'user_insufficient');
+      // Consider the response as user-wallet insufficient only when the
+      // API explicitly indicates it (HTTP 402 or an explicit error_type).
+      // Avoid treating provider-side messages that mention "insufficient"
+      // (which may refer to the provider's own balance) as a user-wallet issue.
+      final isInsufficient =
+          (code != null && code.toString() == '402') ||
+          (response['error_type']?.toString() == 'user_insufficient');
 
-        if (isInsufficient) {
-          // Try to extract balances from response data
-          String currentBalance = '';
-          String requiredAmount = '';
-          if (response['data'] is Map) {
-            currentBalance =
-                (response['data']['current_balance']?.toString() ??
-                response['data']['balance']?.toString() ??
-                '');
-            requiredAmount =
-                (response['data']['required_amount']?.toString() ??
-                response['data']['needed']?.toString() ??
-                '');
-          }
-
-          String details =
-              'Your wallet balance is insufficient to complete this purchase.';
-          if (currentBalance.isNotEmpty || requiredAmount.isNotEmpty) {
-            details =
-                'Current balance: ${currentBalance.isNotEmpty ? currentBalance : 'N/A'}\nRequired: ${requiredAmount.isNotEmpty ? requiredAmount : amountStr}';
-          }
-
-          if (!mounted) return;
-          _showErrorModal('Insufficient Balance', details);
-          setState(() => _isProcessing = false);
-          return;
-        }
-
-        final rawStatus = (response['status'] ?? '').toString().toLowerCase();
-        if (rawStatus.contains('success')) {
-          status = 'success';
-        } else if (rawStatus.contains('process') ||
-            rawStatus.contains('pending')) {
-          status = 'processing';
-        } else {
-          status = 'failed';
-        }
-
-        if (response['data'] != null && response['data'] is Map) {
-          transactionId =
-              (response['data']['transactionId']?.toString() ??
-              response['data']['transaction_id']?.toString() ??
+      if (isInsufficient) {
+        // Try to extract balances from response data
+        String currentBalance = '';
+        String requiredAmount = '';
+        if (response['data'] is Map) {
+          currentBalance =
+              (response['data']['current_balance']?.toString() ??
+              response['data']['balance']?.toString() ??
+              '');
+          requiredAmount =
+              (response['data']['required_amount']?.toString() ??
+              response['data']['needed']?.toString() ??
               '');
         }
 
-        if (transactionId.isEmpty) {
-          transactionId =
-              (response['transactionId']?.toString() ??
-              response['transaction_id']?.toString() ??
-              '');
+        String details =
+            'Your wallet balance is insufficient to complete this purchase.';
+        if (currentBalance.isNotEmpty || requiredAmount.isNotEmpty) {
+          details =
+              'Current balance: ${currentBalance.isNotEmpty ? currentBalance : 'N/A'}\nRequired: ${requiredAmount.isNotEmpty ? requiredAmount : amountStr}';
         }
+
+        if (!mounted) return;
+        _showErrorModal('Insufficient Balance', details);
+        setState(() => _isProcessing = false);
+        return;
       }
 
+      final rawStatus = (response['status'] ?? '').toString().toLowerCase();
+      if (rawStatus.contains('success')) {
+        status = 'success';
+      } else if (rawStatus.contains('process') ||
+          rawStatus.contains('pending')) {
+        status = 'processing';
+      } else {
+        status = 'failed';
+      }
+
+      if (response['data'] != null && response['data'] is Map) {
+        transactionId =
+            (response['data']['transactionId']?.toString() ??
+            response['data']['transaction_id']?.toString() ??
+            '');
+      }
+
+      if (transactionId.isEmpty) {
+        transactionId =
+            (response['transactionId']?.toString() ??
+            response['transaction_id']?.toString() ??
+            '');
+      }
+    
       if (!mounted) return;
 
       // Always open TransactionDetailsPage so user can inspect the outcome
@@ -876,8 +874,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
           _amountError = null;
         });
 
-        if (response != null &&
-            response['data'] != null &&
+        if (response['data'] != null &&
             response['data'] is Map) {
           final data = response['data'] as Map;
           if (data.containsKey('amount') &&

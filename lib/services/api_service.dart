@@ -989,6 +989,47 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> purchaseCardPin({
+    required String planId,
+    required int quantity,
+    required String pin,
+  }) async {
+    try {
+      final userId = await getUserId();
+      if (userId == null) {
+        throw Exception('User not logged in');
+      }
+
+      // Verify transaction PIN
+      final prefs = await SharedPreferences.getInstance();
+      final storedPin = prefs.getString('login_pin');
+
+      if (storedPin == null || storedPin != pin) {
+        throw Exception('Invalid transaction PIN');
+      }
+
+      final response = await _client.post(
+        Uri.parse('$baseUrl/api/purchase-recharge-pin'),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'planId': planId,
+          'quantity': quantity,
+          'userId': userId,
+          'pin': pin,
+        }),
+      );
+
+      print('Card pin purchase response: ${response.body}');
+      return _handleResponse(response);
+    } catch (e) {
+      print('Error purchasing card pin: $e');
+      throw Exception('Failed to purchase card pin: $e');
+    }
+  }
+
   Future<Map<String, dynamic>> post(
     String endpoint,
     Map<String, dynamic> body,

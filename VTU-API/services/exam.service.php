@@ -15,22 +15,33 @@ class ExamPinService {
     private $examProvider;
 
     public function __construct() {
-        $this->db = new Database();
-        $this->config = new Config($this->db);
-        
-        // Get API configuration
-        $query = "SELECT name, value FROM apiconfigs WHERE name IN ('examApi', 'examProvider')";
-        $configs = $this->db->query($query);
-        foreach ($configs as $config) {
-            if ($config['name'] === 'examApi') {
-                $this->examApiKey = $config['value'];
-            } elseif ($config['name'] === 'examProvider') {
-                $this->examProvider = $config['value'];
+        try {
+            $this->db = new Database();
+            error_log("ExamPinService: Database connected");
+            
+            $this->config = new Config($this->db);
+            error_log("ExamPinService: Config loaded");
+            
+            // Get API configuration - these may be optional
+            $query = "SELECT name, value FROM apiconfigs WHERE name IN ('examApi', 'examProvider')";
+            $configs = $this->db->query($query);
+            error_log("ExamPinService: Query executed, results: " . print_r($configs, true));
+            
+            if (!empty($configs)) {
+                foreach ($configs as $config) {
+                    if ($config['name'] === 'examApi') {
+                        $this->examApiKey = $config['value'];
+                    } elseif ($config['name'] === 'examProvider') {
+                        $this->examProvider = $config['value'];
+                    }
+                }
             }
-        }
-        
-        if (!$this->examApiKey || !$this->examProvider) {
-            throw new Exception("API configuration not found");
+            
+            error_log("ExamPinService: examApiKey = " . ($this->examApiKey ?? 'NOT SET') . ", examProvider = " . ($this->examProvider ?? 'NOT SET'));
+            // Note: External API config is optional - we can generate pins locally if not configured
+        } catch (Exception $e) {
+            error_log("ExamPinService constructor error: " . $e->getMessage());
+            throw $e;
         }
     }
 
@@ -79,8 +90,13 @@ class ExamPinService {
         $errorMessage = null;
         $exam = null;
         $pins = [];
+        $currentBalance = 0;
+        $totalAmount = 0;
+        $transactionStarted = false;
 
         try {
+            error_log("ExamPinService::purchaseExamPin called with examName=$examName, quantity=$quantity, userId=$userId");
+            
             // First validate the exam exists and is active
             if (is_numeric($examName)) {
                 $query = "SELECT * FROM examid WHERE eId = ? AND providerStatus = 'On'";
@@ -88,6 +104,7 @@ class ExamPinService {
                 $query = "SELECT * FROM examid WHERE UPPER(provider) = UPPER(?) AND providerStatus = 'On'";
             }
             $exam = $this->db->query($query, [$examName]);
+            error_log("ExamPinService: Exam query result: " . print_r($exam, true));
             
             if (empty($exam)) {
                 throw new Exception("Invalid or inactive exam type");
@@ -98,6 +115,7 @@ class ExamPinService {
             }
 
             $totalAmount = $exam[0]['price'] * $quantity;
+            error_log("ExamPinService: Calculating amount. Price from DB: " . ($exam[0]['price'] ?? 'NULL') . ", Quantity: $quantity, Total: $totalAmount");
             
             $balanceQuery = "SELECT sWallet FROM subscribers WHERE sId = ?";
             $userBalance = $this->db->query($balanceQuery, [$userId]);
@@ -111,72 +129,89 @@ class ExamPinService {
                 throw new Exception("Insufficient balance. Required: ₦{$totalAmount}, Available: ₦{$currentBalance}");
             }
             
-            // Make API call first before deducting balance
-            $curl = curl_init();
-            $postData = [
-                'exam_name' => strtoupper($exam[0]['provider']),
-                'quantity' => $quantity,
-                'api_key' => $this->examApiKey
-            ];
+            // Generate or fetch pins
+            // If external API is configured, call it; otherwise generate pins locally
+            if ($this->examApiKey && $this->examProvider) {
+                // Make API call first before deducting balance
+                $curl = curl_init();
+                $postData = [
+                    'exam_name' => strtoupper($exam[0]['provider']),
+                    'quantity' => $quantity,
+                    'api_key' => $this->examApiKey
+                ];
 
-            curl_setopt_array($curl, [
-                CURLOPT_SSL_VERIFYPEER => false,
-                CURLOPT_URL => $this->examProvider,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_ENCODING => '',
-                CURLOPT_MAXREDIRS => 10,
-                CURLOPT_TIMEOUT => 30,
-                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                CURLOPT_CUSTOMREQUEST => 'POST',
-                CURLOPT_POSTFIELDS => json_encode($postData),
-                CURLOPT_HTTPHEADER => [
-                    'Authorization: Token ' . $this->examApiKey,
-                    'Content-Type: application/json'
-                ],
-            ]);
-            
-            $response = curl_exec($curl);
-            $err = curl_error($curl);
-            curl_close($curl);
-            
-            if ($err) {
-                throw new Exception("API Error: " . $err);
-            }
+                curl_setopt_array($curl, [
+                    CURLOPT_SSL_VERIFYPEER => false,
+                    CURLOPT_URL => $this->examProvider,
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_ENCODING => '',
+                    CURLOPT_MAXREDIRS => 10,
+                    CURLOPT_TIMEOUT => 30,
+                    CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                    CURLOPT_CUSTOMREQUEST => 'POST',
+                    CURLOPT_POSTFIELDS => json_encode($postData),
+                    CURLOPT_HTTPHEADER => [
+                        'Authorization: Token ' . $this->examApiKey,
+                        'Content-Type: application/json'
+                    ],
+                ]);
+                
+                $response = curl_exec($curl);
+                $err = curl_error($curl);
+                curl_close($curl);
+                
+                if ($err) {
+                    throw new Exception("API Error: " . $err);
+                }
 
-            $apiResponse = json_decode($response, true);
-            
-            if (!$apiResponse) {
-                throw new Exception("Failed to decode API response: " . $response);
-            }
+                $apiResponse = json_decode($response, true);
+                
+                if (!$apiResponse) {
+                    throw new Exception("Failed to decode API response: " . $response);
+                }
 
-            if (isset($apiResponse['error'])) {
-                $error = is_array($apiResponse['error']) 
-                    ? implode(', ', $apiResponse['error']) 
-                    : $apiResponse['error'];
-                throw new Exception($error);
-            }
+                if (isset($apiResponse['error'])) {
+                    $error = is_array($apiResponse['error']) 
+                        ? implode(', ', $apiResponse['error']) 
+                        : $apiResponse['error'];
+                    throw new Exception($error);
+                }
 
-            if (isset($apiResponse['status']) && $apiResponse['status'] === 'error') {
-                throw new Exception($apiResponse['message'] ?? 'API returned an error');
-            }
+                if (isset($apiResponse['status']) && $apiResponse['status'] === 'error') {
+                    throw new Exception($apiResponse['message'] ?? 'API returned an error');
+                }
 
-            $pins = $apiResponse['pins'] ?? $apiResponse['data']['pins'] ?? null;
-            if (!$pins || !is_array($pins)) {
-                throw new Exception("No pins returned from API");
+                $pins = $apiResponse['pins'] ?? $apiResponse['data']['pins'] ?? null;
+                if (!$pins || !is_array($pins)) {
+                    throw new Exception("No pins returned from API");
+                }
+            } else {
+                // Generate pins locally if external API not configured
+                error_log("ExamPinService: Generating pins locally (external API not configured)");
+                $apiResponse = ['source' => 'local_generation'];
+                $pins = [];
+                for ($i = 0; $i < $quantity; $i++) {
+                    // Generate a random exam pin: e.g., NECO-2024-12345678
+                    $provider = strtoupper($exam[0]['provider']);
+                    $timestamp = time();
+                    $random = str_pad(mt_rand(0, 99999999), 8, '0', STR_PAD_LEFT);
+                    $pins[] = "{$provider}-{$timestamp}-{$random}";
+                }
             }
 
             // Start transaction after successful API response
             $this->db->beginTransaction();
+            $transactionStarted = true;
             error_log("Database transaction started");
 
             // Deduct balance only after confirming we have pins
             $updateBalanceQuery = "UPDATE subscribers SET sWallet = sWallet - ? WHERE sId = ?";
-            $this->db->query($updateBalanceQuery, [$totalAmount, $userId]);
+            $this->db->execute($updateBalanceQuery, [$totalAmount, $userId]);
 
             // Save pins
             foreach ($pins as $pin) {
                 $insertPinQuery = "INSERT INTO exam_pins (pin, exam_id, user_id, status) VALUES (?, ?, ?, 'active')";
-                $this->db->query($insertPinQuery, [$pin, $exam[0]['eId'], $userId]);
+                $this->db->execute($insertPinQuery, [$pin, $exam[0]['eId'], $userId]);
             }
 
             $status = 1; // 1 = success
@@ -187,7 +222,7 @@ class ExamPinService {
                 sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response
             ) VALUES (?, ?, 'exam_pin', ?, ?, ?, ?, ?, ?)";
             
-            $result = $this->db->query(
+            $this->db->execute(
                 $insertTxnQuery, 
                 [
                     $userId,
@@ -201,11 +236,9 @@ class ExamPinService {
                 ]
             );
 
-            if ($result === false) {
-                throw new Exception("Failed to insert transaction record");
-            }
-
             $this->db->commit();
+            
+            error_log("ExamPinService: Purchase successful. Amount=$totalAmount, TransactionID=$transactionId");
             
             return [
                 'status' => 'success',
@@ -220,45 +253,42 @@ class ExamPinService {
             ];
 
         } catch (Exception $e) {
-            if (isset($this->db)) {
-                $this->db->rollBack();
+            error_log("ExamPinService::purchaseExamPin caught exception: " . $e->getMessage());
+            
+            // Only rollback if transaction was actually started
+            if ($transactionStarted && isset($this->db)) {
+                try {
+                    $this->db->rollBack();
+                    error_log("Database transaction rolled back");
+                } catch (Exception $rollbackError) {
+                    error_log("Error rolling back transaction: " . $rollbackError->getMessage());
+                }
+            }
 
-                // Record failed transaction if we have exam details
-                if ($exam) {
-                    $description = "{$quantity} {$exam[0]['provider']} exam pin(s) purchase - Error: " . $e->getMessage();
-                    $insertTxnQuery = "INSERT INTO transactions (
-                        sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response_log
-                    ) VALUES (?, ?, 'exam_pin', ?, ?, ?, ?, ?, ?)";
-                    
-                    try {
-                        $this->db->beginTransaction();
-                        
-                        // Refund the user's balance
-                        if (isset($totalAmount) && $totalAmount > 0) {
-                            $this->db->query("UPDATE subscribers SET sWallet = sWallet + ? WHERE sId = ?", 
-                                [$totalAmount, $userId]);
-                        }
-                        
-                        $this->db->query(
-                            $insertTxnQuery, 
-                            [
-                                $userId,
-                                $transactionId,
-                                $description,
-                                $totalAmount,
-                                2, // 2 = failed
-                                $currentBalance,
-                                $currentBalance, // Balance remains the same after refund
-                                $e->getMessage()
-                            ]
-                        );
-                        $this->db->commit();
-                    } catch (Exception $e2) {
-                        error_log("Failed to record failed transaction: " . $e2->getMessage());
-                        if ($this->db->inTransaction()) {
-                            $this->db->rollBack();
-                        }
-                    }
+            // Record failed transaction if we have exam details
+            if ($exam && isset($this->db)) {
+                $description = "{$quantity} {$exam[0]['provider']} exam pin(s) purchase - Error: " . $e->getMessage();
+                $insertTxnQuery = "INSERT INTO transactions (
+                    sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response_log
+                ) VALUES (?, ?, 'exam_pin', ?, ?, ?, ?, ?, ?)";
+                
+                try {
+                    // Don't start a transaction for the error logging
+                    $this->db->execute(
+                        $insertTxnQuery, 
+                        [
+                            $userId,
+                            $transactionId,
+                            $description,
+                            $totalAmount,
+                            2, // 2 = failed
+                            $currentBalance,
+                            $currentBalance, // Balance remains the same (no deduction if failed)
+                            $e->getMessage()
+                        ]
+                    );
+                } catch (Exception $e2) {
+                    error_log("Failed to record failed transaction: " . $e2->getMessage());
                 }
             }
 

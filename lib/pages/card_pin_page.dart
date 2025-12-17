@@ -4,7 +4,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
+import 'dart:convert';
 import '../utils/network_utils.dart';
+import '../services/api_service.dart';
+import './transaction_details_page.dart';
 
 class CardPinPage extends StatefulWidget {
   const CardPinPage({super.key});
@@ -25,6 +28,8 @@ class _CardPinPageState extends State<CardPinPage> {
   bool _isProcessing = false;
   final LocalAuthentication _localAuth = LocalAuthentication();
   bool _isBiometricEnabled = false;
+  final ApiService _apiService = ApiService();
+  double _userBalance = 0.0;
 
   final List<Map<String, dynamic>> cardTypes = [
     {'name': 'MTN', 'price': 1000},
@@ -61,7 +66,31 @@ class _CardPinPageState extends State<CardPinPage> {
     super.initState();
     _quantityController.addListener(_updateAmount);
     _loadBiometricSettings();
+    _loadUserBalance();
     _initConnectivity();
+  }
+
+  Future<void> _loadUserBalance() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userDataJson = prefs.getString('user_data');
+
+      if (userDataJson != null) {
+        final userData = jsonDecode(userDataJson);
+        final balance = userData['sWallet'];
+
+        setState(() {
+          _userBalance = balance is String
+              ? double.tryParse(balance) ?? 0.0
+              : (balance as num).toDouble();
+        });
+
+        print('User balance loaded: $_userBalance');
+      }
+    } catch (e) {
+      print('Error loading user balance: $e');
+      setState(() => _userBalance = 0.0);
+    }
   }
 
   Future<void> _loadBiometricSettings() async {
@@ -183,6 +212,13 @@ class _CardPinPageState extends State<CardPinPage> {
       return;
     }
 
+    // Check balance before showing PIN sheet
+    final amount = double.tryParse(_amountController.text) ?? 0.0;
+    if (amount > _userBalance) {
+      _showInsufficientBalanceDialog(required: amount, available: _userBalance);
+      return;
+    }
+
     // Show PIN sheet
     _showPinSheet();
   }
@@ -282,6 +318,7 @@ class _CardPinPageState extends State<CardPinPage> {
                                 );
                                 if (!_isProcessing) {
                                   Navigator.pop(context);
+                                  _pinController.text = pin;
                                   _processPurchase(pinInput);
                                 }
                               }
@@ -305,39 +342,59 @@ class _CardPinPageState extends State<CardPinPage> {
                             );
                           });
                         }
-                      });
+                      }, isDelete: true);
                     }
                   },
                 ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton(
-                    onPressed: pinInput.length == 4 && !_isProcessing
-                        ? () {
-                            Navigator.pop(context);
-                            _processPurchase(pinInput);
-                          }
-                        : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFce4323),
-                      disabledBackgroundColor: Colors.grey.shade400,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 54,
+                    child: ElevatedButton(
+                      onPressed: pinInput.length == 4
+                          ? () async {
+                              final prefs =
+                                  await SharedPreferences.getInstance();
+                              final storedPin = prefs.getString('login_pin');
+
+                              if (storedPin == null || pinInput != storedPin) {
+                                Navigator.pop(context);
+                                showNetworkErrorSnackBar(
+                                  context,
+                                  'Incorrect PIN. Please try again.',
+                                );
+                                return;
+                              }
+
+                              _pinController.text = pinInput;
+                              Navigator.pop(context);
+                              _processPurchase(pinInput);
+                            }
+                          : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFce4323),
+                        disabledBackgroundColor: Colors.grey.shade300,
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
-                    ),
-                    child: const Text(
-                      'Confirm',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                      child: Text(
+                        'Verify PIN',
+                        style: TextStyle(
+                          color: pinInput.length == 4
+                              ? Colors.white
+                              : Colors.grey.shade500,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 4),
               ],
             ),
           ),
@@ -351,70 +408,243 @@ class _CardPinPageState extends State<CardPinPage> {
     setState(() => _isProcessing = true);
 
     try {
-      // Simulate API call
-      await Future.delayed(const Duration(seconds: 2));
+      final quantity = int.tryParse(_quantityController.text) ?? 1;
+      final amount = double.tryParse(_amountController.text) ?? 0.0;
 
-      if (!mounted) return;
-
-      _nameController.clear();
-      _quantityController.text = '1';
-      _amountController.text = '1000.00';
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Card pin purchased successfully!'),
-          backgroundColor: Colors.green,
-        ),
+      print(
+        'Attempting card pin purchase: card=$_selectedCard, quantity=$quantity, amount=$amount',
       );
+
+      // Call real API
+      final response = await _apiService.purchaseCardPin(
+        planId: _selectedCard,
+        quantity: quantity,
+        pin: pin,
+      );
+
+      print('Card pin purchase response: $response');
+
+      if (mounted) {
+        setState(() => _isProcessing = false);
+
+        // Extract transaction details
+        final transactionId =
+            response['data']?['transactionId'] ??
+            response['data']?['transaction_id'] ??
+            response['data']?['tId'] ??
+            response['reference'] ??
+            'N/A';
+        final responseAmount = response['data']?['amount'];
+        final responseAmount2 = responseAmount != null
+            ? responseAmount.toString()
+            : amount.toStringAsFixed(2);
+        final status = response['status'] == 'success' ? 'success' : 'failed';
+
+        // Clear form
+        _nameController.clear();
+        _quantityController.text = '1';
+        _amountController.text = '1000.00';
+
+        // Navigate to transaction details page
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => TransactionDetailsPage(
+                transactionId: transactionId.toString(),
+                initialStatus: status,
+                amount: responseAmount2,
+                phoneNumber: '',
+                network: _selectedCard,
+                planName: 'Card Pin - $_selectedCard ($quantity)',
+                transactionDate: DateTime.now().toString(),
+                planValidity: '',
+              ),
+            ),
+          );
+        }
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
+        showNetworkErrorSnackBar(context, errorMessage);
+      }
     }
   }
 
   Widget _buildPinButton(
-    String text,
+    String label,
     VoidCallback onPressed, {
+    bool isDelete = false,
     bool isBiometric = false,
   }) {
-    if (isBiometric) {
-      return GestureDetector(
-        onTap: onPressed,
-        child: Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.grey.shade300),
-          ),
-          child: const Icon(
-            Icons.fingerprint,
-            color: Color(0xFFce4323),
-            size: 24,
-          ),
-        ),
-      );
-    }
-
     return GestureDetector(
-      onTap: onPressed,
+      onTap: (label.isNotEmpty || isBiometric) ? onPressed : null,
       child: Container(
+        margin: const EdgeInsets.all(1),
         decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.grey.shade200,
+          color: label.isEmpty && !isBiometric
+              ? Colors.transparent
+              : isDelete
+              ? Colors.grey.shade200
+              : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: (label.isEmpty && !isBiometric)
+                ? Colors.transparent
+                : Colors.grey.shade300,
+            width: 1.2,
+          ),
         ),
         child: Center(
-          child: Text(
-            text,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
-            ),
+          child: isBiometric
+              ? const Icon(
+                  Icons.fingerprint,
+                  color: Color(0xFFce4323),
+                  size: 18,
+                )
+              : Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: isDelete ? Colors.grey.shade700 : Colors.black,
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+
+  void _showInsufficientBalanceDialog({
+    required double required,
+    required double available,
+  }) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text(
+          'Insufficient Balance',
+          style: TextStyle(
+            color: Color(0xFFce4323),
+            fontWeight: FontWeight.bold,
           ),
         ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your wallet balance is insufficient to complete this purchase.',
+              style: TextStyle(fontSize: 14, color: Colors.black87),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Required:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      Text(
+                        '₦${required.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFce4323),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Available:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      Text(
+                        '₦${available.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Shortfall:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      Text(
+                        '₦${(required - available).toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Go Back',
+              style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w500),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              // Navigate to wallet/fund page
+              Navigator.pushNamed(context, '/wallet');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFce4323),
+            ),
+            child: const Text(
+              'Fund Wallet',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
+import 'dart:convert';
 import '../services/api_service.dart';
 import '../pages/transaction_details_page.dart';
 import 'dart:async';
@@ -26,6 +27,7 @@ class _DatapinPageState extends State<DatapinPage> {
   bool _isLoading = true;
   bool _hasInternet = true;
   StreamSubscription? _connectivitySubscription;
+  double _userBalance = 0.0;
 
   final ApiService _apiService = ApiService();
   final LocalAuthentication _localAuth = LocalAuthentication();
@@ -129,6 +131,13 @@ class _DatapinPageState extends State<DatapinPage> {
 
     if (_nameController.text.isEmpty) {
       _showValidationModal('Missing Card Name', 'Please enter a card name');
+      return;
+    }
+
+    // Check balance before showing PIN sheet
+    final amount = double.tryParse(_amountController.text) ?? 0.0;
+    if (amount > _userBalance) {
+      _showInsufficientBalanceDialog(required: amount, available: _userBalance);
       return;
     }
 
@@ -300,19 +309,28 @@ class _DatapinPageState extends State<DatapinPage> {
     setState(() => _isProcessing = true);
 
     try {
+      // Find the selected plan to get the actual planCode
+      final selectedPlan = _dataPinPlans.firstWhere((plan) {
+        final uniqueValue = '${plan['id']}_${plan['planCode']}';
+        return uniqueValue == _selectedPlan;
+      }, orElse: () => {});
+
+      if (selectedPlan.isEmpty) {
+        if (mounted) showNetworkErrorSnackBar(context, 'Plan not found');
+        if (mounted) setState(() => _isProcessing = false);
+        return;
+      }
+
+      final planCode = selectedPlan['planCode']?.toString() ?? '';
+
       final response = await _apiService.purchaseDataPin(
-        planId: _selectedPlan!,
+        planId: planCode,
         quantity: int.parse(_quantityController.text),
         nameOnCard: _nameController.text,
         pin: pin,
       );
 
       if (!mounted) return;
-
-      final selectedPlan = _dataPinPlans.firstWhere(
-        (plan) => plan['planCode'].toString() == _selectedPlan,
-        orElse: () => {},
-      );
 
       final transactionId = response['data']?['reference'] ?? '';
       final amount = _amountController.text;
@@ -410,6 +428,131 @@ class _DatapinPageState extends State<DatapinPage> {
     );
   }
 
+  void _showInsufficientBalanceDialog({
+    required double required,
+    required double available,
+  }) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text(
+          'Insufficient Balance',
+          style: TextStyle(
+            color: Color(0xFFce4323),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your wallet balance is insufficient to complete this purchase.',
+              style: TextStyle(fontSize: 14, color: Colors.black87),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Required:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      Text(
+                        '₦${required.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFce4323),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Available:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      Text(
+                        '₦${available.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Shortfall:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      Text(
+                        '₦${(required - available).toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFce4323),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/wallet');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFce4323),
+            ),
+            child: const Text(
+              'Fund Wallet',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _checkBiometricSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -418,6 +561,29 @@ class _DatapinPageState extends State<DatapinPage> {
       });
     } catch (e) {
       print('Error loading biometric settings: $e');
+    }
+  }
+
+  Future<void> _loadUserBalance() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userDataJson = prefs.getString('user_data');
+
+      if (userDataJson != null) {
+        final userData = jsonDecode(userDataJson);
+        final balance = userData['sWallet'];
+
+        setState(() {
+          _userBalance = balance is String
+              ? double.tryParse(balance) ?? 0.0
+              : (balance as num).toDouble();
+        });
+
+        print('User balance loaded: $_userBalance');
+      }
+    } catch (e) {
+      print('Error loading user balance: $e');
+      setState(() => _userBalance = 0.0);
     }
   }
 
@@ -462,6 +628,9 @@ class _DatapinPageState extends State<DatapinPage> {
     _fetchNetworkStatuses();
     _checkBiometricSettings();
     _initConnectivity();
+    _loadUserBalance();
+    // Load all plans initially
+    _loadDataPinPlans();
   }
 
   Future<void> _initConnectivity() async {
@@ -484,16 +653,28 @@ class _DatapinPageState extends State<DatapinPage> {
     }
     setState(() {
       _isLoading = true;
+      _selectedPlan = null; // Reset selected plan when loading new plans
     });
 
     try {
       final response = await _apiService.getDataPinPlans(network: network);
+      print('📡 Data PIN Plans Response: $response');
+
       if (response['status'] == 'success') {
+        final plans = List<Map<String, dynamic>>.from(response['data'] ?? []);
+        print(
+          '✅ Loaded ${plans.length} plans for network: ${network ?? "all"}',
+        );
+        print(
+          'Plan details: ${plans.map((p) => '${p['name']} (networkId: ${p['networkId']})').toList()}',
+        );
+
         setState(() {
-          _dataPinPlans = List<Map<String, dynamic>>.from(response['data']);
+          _dataPinPlans = plans;
           _isLoading = false;
         });
       } else {
+        print('❌ API Error: ${response['message']}');
         setState(() {
           _isLoading = false;
         });
@@ -505,6 +686,7 @@ class _DatapinPageState extends State<DatapinPage> {
         }
       }
     } catch (e) {
+      print('❌ Exception: $e');
       setState(() {
         _isLoading = false;
       });
@@ -516,15 +698,18 @@ class _DatapinPageState extends State<DatapinPage> {
   void _updateAmount() {
     if (_selectedPlan == null) return;
 
-    final selectedPlanData = _dataPinPlans.firstWhere(
-      (plan) => plan['planCode'].toString() == _selectedPlan,
-      orElse: () => {},
-    );
+    final selectedPlanData = _dataPinPlans.firstWhere((plan) {
+      // Parse the unique value format: "id_planCode"
+      final uniqueValue = '${plan['id']}_${plan['planCode']}';
+      return uniqueValue == _selectedPlan;
+    }, orElse: () => {});
 
     if (selectedPlanData.isEmpty) return;
 
     int quantity = int.tryParse(_quantityController.text) ?? 1;
-    double baseAmount = double.parse(selectedPlanData['price'].toString());
+    double baseAmount = double.parse(
+      selectedPlanData['price']?.toString() ?? '0',
+    );
     _amountController.text = (baseAmount * quantity).toStringAsFixed(2);
   }
 
@@ -662,7 +847,7 @@ class _DatapinPageState extends State<DatapinPage> {
                             ],
                           ),
                         )
-                      : DropdownButton<String>(
+                      : DropdownButton<String?>(
                           value: _selectedPlan,
                           isExpanded: true,
                           underline: const SizedBox(),
@@ -670,33 +855,39 @@ class _DatapinPageState extends State<DatapinPage> {
                             padding: EdgeInsets.symmetric(horizontal: 12),
                             child: Text('Select Plan'),
                           ),
-                          items: _dataPinPlans
-                              .where((plan) {
-                                if (_selectedNetwork == null) return true;
-                                final idx = networks.indexOf(
-                                  _selectedNetwork ?? '',
-                                );
-                                final expectedId = (idx >= 0)
-                                    ? (idx + 1).toString()
-                                    : null;
-                                return expectedId != null &&
-                                    plan['networkId'].toString() == expectedId;
-                              })
-                              .map<DropdownMenuItem<String>>((plan) {
-                                return DropdownMenuItem<String>(
-                                  value: plan['planCode'].toString(),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                    ),
-                                    child: Text(
-                                      '${plan['name']} - ₦${plan['price']}',
-                                      style: const TextStyle(fontSize: 14),
+                          items: _dataPinPlans.isEmpty
+                              ? [
+                                  const DropdownMenuItem<String?>(
+                                    value: null,
+                                    child: Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                      ),
+                                      child: Text('No plans available'),
                                     ),
                                   ),
-                                );
-                              })
-                              .toList(),
+                                ]
+                              : _dataPinPlans.asMap().entries.map<
+                                  DropdownMenuItem<String?>
+                                >((entry) {
+                                  final plan = entry.value;
+                                  // Use a unique combination to avoid duplicates
+                                  final uniqueValue =
+                                      '${plan['id']}_${plan['planCode']}'
+                                          .toString();
+                                  return DropdownMenuItem<String?>(
+                                    value: uniqueValue,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                      ),
+                                      child: Text(
+                                        '${plan['name'] ?? 'Unknown'} - ₦${plan['price'] ?? 0}',
+                                        style: const TextStyle(fontSize: 14),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
                           onChanged: (String? newValue) {
                             setState(() {
                               _selectedPlan = newValue;

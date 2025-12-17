@@ -157,28 +157,57 @@ function sendTransactionNotification($userId, $transactionType, $transactionData
             break;
             
         case 'airtime':
-            $title = '☎️ Airtime Loaded';
+            $status = $transactionData['status'] ?? 'success';
             $amount = $transactionData['amount'] ?? '0';
             $network = $transactionData['network'] ?? 'Unknown';
-            $body = '₦' . number_format($amount) . ' loaded on ' . $network;
+            
+            if ($status === 'error' || $status === 'failed') {
+                $title = '❌ Airtime Purchase Failed';
+                $body = 'Unable to load ₦' . number_format($amount) . ' on ' . $network . '. Balance not deducted. Please try again.';
+            } else {
+                $title = '☎️ Airtime Loaded';
+                $body = '₦' . number_format($amount) . ' loaded on ' . $network;
+            }
             break;
             
         case 'data':
-            $title = '📡 Data Bundle Purchased';
+            $status = $transactionData['status'] ?? 'success';
             $plan = $transactionData['plan'] ?? 'Unknown';
-            $body = 'Your ' . $plan . ' data bundle is ready to use';
+            
+            if ($status === 'error' || $status === 'failed') {
+                $title = '❌ Data Bundle Purchase Failed';
+                $body = 'Unable to purchase ' . $plan . ' data bundle. Balance not deducted. Please try again.';
+            } else {
+                $title = '📡 Data Bundle Purchased';
+                $body = 'Your ' . $plan . ' data bundle is ready to use';
+            }
             break;
             
         case 'cable':
-            $title = '📺 Cable Subscription Active';
+            $status = $transactionData['status'] ?? 'success';
             $provider = $transactionData['provider'] ?? 'Unknown';
-            $body = $provider . ' subscription activated successfully';
+            $amount = $transactionData['amount'] ?? '0';
+            
+            if ($status === 'error' || $status === 'failed') {
+                $title = '❌ Cable Subscription Failed';
+                $body = 'Unable to subscribe to ' . $provider . '. Balance not deducted. Please try again.';
+            } else {
+                $title = '📺 Cable Subscription Active';
+                $body = $provider . ' subscription activated successfully';
+            }
             break;
             
         case 'electricity':
-            $title = '💡 Power Token Generated';
+            $status = $transactionData['status'] ?? 'success';
             $amount = $transactionData['amount'] ?? '0';
-            $body = '₦' . number_format($amount) . ' electricity credit purchased';
+            
+            if ($status === 'error' || $status === 'failed') {
+                $title = '❌ Electricity Purchase Failed';
+                $body = 'Unable to purchase ₦' . number_format($amount) . ' electricity credit. Balance not deducted. Please try again.';
+            } else {
+                $title = '💡 Power Token Generated';
+                $body = '₦' . number_format($amount) . ' electricity credit purchased';
+            }
             break;
             
         case 'wallet_credit':
@@ -257,6 +286,53 @@ function sendTransactionNotification($userId, $transactionType, $transactionData
             // Notification when user changes their transaction PIN
             $title = '🔐 PIN Changed';
             $body = 'Your transaction PIN has been successfully updated';
+            break;
+
+        case 'card_pin':
+            // Notification for card PIN purchases
+            $status = $transactionData['status'] ?? 'error';
+            $network = $transactionData['network'] ?? 'Card PIN';
+            $quantity = $transactionData['quantity'] ?? 1;
+            $amount = $transactionData['amount'] ?? '0';
+            
+            if ($status === 'error') {
+                $title = '❌ Card PIN Purchase Failed';
+                $body = 'Unable to purchase ' . $quantity . ' ' . $network . ' card PIN(s). Balance not deducted. Please try again.';
+            } else {
+                $title = '🎟️ Card PIN Purchased';
+                $body = '₦' . number_format($amount) . ' for ' . $quantity . ' ' . $network . ' card PIN(s)';
+            }
+            break;
+
+        case 'data_pin':
+            // Notification for data PIN purchases
+            $status = $transactionData['status'] ?? 'error';
+            $planName = $transactionData['planName'] ?? 'Data PIN';
+            $quantity = $transactionData['quantity'] ?? 1;
+            $amount = $transactionData['amount'] ?? '0';
+            
+            if ($status === 'error') {
+                $title = '❌ Data PIN Purchase Failed';
+                $body = 'Unable to purchase ' . $quantity . ' ' . $planName . ' data PIN(s). Balance not deducted. Please try again.';
+            } else {
+                $title = '🎟️ Data PIN Purchased';
+                $body = '₦' . number_format($amount) . ' for ' . $quantity . ' ' . $planName . ' data PIN(s)';
+            }
+            break;
+
+        case 'exam_pin':
+            // Notification for exam PIN purchases
+            $status = $transactionData['status'] ?? 'error';
+            $quantity = $transactionData['quantity'] ?? 1;
+            $amount = $transactionData['amount'] ?? '0';
+            
+            if ($status === 'error') {
+                $title = '❌ Exam PIN Purchase Failed';
+                $body = 'Unable to purchase ' . $quantity . ' exam PIN(s). Balance not deducted. Please try again.';
+            } else {
+                $title = '📚 Exam PIN Purchased';
+                $body = '₦' . number_format($amount) . ' for ' . $quantity . ' exam PIN(s)';
+            }
             break;
             
         default:

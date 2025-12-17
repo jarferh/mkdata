@@ -3,9 +3,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
+import 'dart:convert';
 import './transactions_page.dart';
+import './transaction_details_page.dart';
 import 'dart:async';
 import '../utils/network_utils.dart';
+import '../services/api_service.dart';
 
 class ExamPinPage extends StatefulWidget {
   const ExamPinPage({super.key});
@@ -18,34 +21,103 @@ class _ExamPinPageState extends State<ExamPinPage> {
   final _quantityController = TextEditingController(text: '1');
   final _pinController = TextEditingController();
   final LocalAuthentication _localAuth = LocalAuthentication();
+  final ApiService _apiService = ApiService();
   bool _isBiometricEnabled = false;
 
   String? _selectedExam;
+  String? _selectedExamId;
   bool _isProcessing = false;
   bool _hasInternet = true;
+  bool _isLoadingProviders = true;
   StreamSubscription? _connectivitySubscription;
 
-  // Exam providers with logos
-  final List<Map<String, dynamic>> _examProviders = [
-    {'name': 'NECO', 'logo': 'assets/images/neco.png'},
-    {'name': 'WAEC', 'logo': 'assets/images/waec.png'},
-  ];
+  // Exam providers with logos, IDs, and prices
+  List<Map<String, dynamic>> _examProviders = [];
+  double _selectedPrice = 0;
+  double _totalAmount = 0;
+  double _userBalance = 0.0;
 
   @override
   void initState() {
     super.initState();
     _checkBiometricSettings();
     _initConnectivity();
-    // Initialize with first provider's plans
-    if (_examProviders.isNotEmpty) {
-      _selectedExam = _examProviders[0]['name'];
-      _loadPlansForProvider(_selectedExam!);
+    _loadUserBalance();
+    _loadExamProviders();
+    _quantityController.addListener(_updateTotalAmount);
+  }
+
+  Future<void> _loadUserBalance() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userDataJson = prefs.getString('user_data');
+
+      if (userDataJson != null) {
+        final userData = jsonDecode(userDataJson);
+        final balance = userData['sWallet'];
+
+        setState(() {
+          _userBalance = balance is String
+              ? double.tryParse(balance) ?? 0.0
+              : (balance as num).toDouble();
+        });
+
+        print('User balance loaded: $_userBalance');
+      }
+    } catch (e) {
+      print('Error loading user balance: $e');
+      setState(() => _userBalance = 0.0);
     }
   }
 
-  void _loadPlansForProvider(String provider) {
+  Future<void> _loadExamProviders() async {
+    try {
+      final response = await _apiService.get('exam-providers');
+
+      if (response['status'] == 'success' && response['data'] != null) {
+        final providers = (response['data'] as List)
+            .map(
+              (p) => {
+                'id': p['id']?.toString() ?? p['name']?.toString() ?? '',
+                'name': p['name']?.toString() ?? '',
+                'price':
+                    (p['price'] is String
+                        ? double.tryParse(p['price'].toString()) ?? 0
+                        : (p['price'] as num).toDouble()) ??
+                    0,
+                'logo':
+                    'assets/images/${p['name']?.toString().toLowerCase()}.png',
+              },
+            )
+            .toList();
+
+        if (mounted) {
+          setState(() {
+            _examProviders = providers;
+            _isLoadingProviders = false;
+
+            // Select first provider
+            if (_examProviders.isNotEmpty) {
+              _selectedExam = _examProviders[0]['name'];
+              _selectedExamId = _examProviders[0]['id'];
+              _selectedPrice = _examProviders[0]['price'];
+              _updateTotalAmount();
+            }
+          });
+        }
+      }
+    } catch (e) {
+      print('Error loading exam providers: $e');
+      if (mounted) {
+        setState(() => _isLoadingProviders = false);
+      }
+    }
+  }
+
+  void _updateTotalAmount() {
+    final quantity = int.tryParse(_quantityController.text) ?? 0;
     setState(() {
-      _selectedExam = provider;
+      _totalAmount = _selectedPrice * quantity;
     });
   }
 
@@ -130,6 +202,7 @@ class _ExamPinPageState extends State<ExamPinPage> {
   @override
   void dispose() {
     _connectivitySubscription?.cancel();
+    _quantityController.removeListener(_updateTotalAmount);
     _quantityController.dispose();
     _pinController.dispose();
     super.dispose();
@@ -365,38 +438,279 @@ class _ExamPinPageState extends State<ExamPinPage> {
 
     // Validate inputs
     if (_selectedExam == null || _selectedExam!.isEmpty) {
-      showNetworkErrorSnackBar(context, 'Please select an exam provider');
-      setState(() => _isProcessing = false);
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        _showErrorDialog('Please select an exam provider');
+      }
       return;
     }
 
     if (_quantityController.text.isEmpty) {
-      showNetworkErrorSnackBar(context, 'Please enter quantity');
-      setState(() => _isProcessing = false);
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        _showErrorDialog('Please enter quantity');
+      }
       return;
     }
 
     if (_pinController.text.isEmpty) {
-      showNetworkErrorSnackBar(context, 'Please enter PIN');
-      setState(() => _isProcessing = false);
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        _showErrorDialog('Please enter PIN');
+      }
       return;
     }
 
-    // Simulate API call
-    await Future.delayed(const Duration(seconds: 1));
+    try {
+      // Call real API
+      final quantity = int.tryParse(_quantityController.text) ?? 0;
+      if (quantity <= 0) {
+        throw Exception('Quantity must be greater than 0');
+      }
 
-    if (mounted) {
-      setState(() => _isProcessing = false);
-      showNetworkErrorSnackBar(context, 'Exam pin purchased successfully!');
+      // Check balance before purchase
+      if (_totalAmount > _userBalance) {
+        if (mounted) {
+          setState(() => _isProcessing = false);
+          _showInsufficientBalanceDialog(
+            required: _totalAmount,
+            available: _userBalance,
+          );
+        }
+        return;
+      }
 
-      // Clear form
-      _quantityController.clear();
-      _pinController.clear();
-      setState(() {
-        _selectedExam = _examProviders[0]['name'];
-        _loadPlansForProvider(_selectedExam!);
-      });
+      print(
+        'Attempting exam purchase: provider=$_selectedExam, quantity=$quantity, pin=${_pinController.text}',
+      );
+
+      final response = await _apiService.purchaseExamPin(
+        examId: _selectedExamId ?? _selectedExam!,
+        quantity: quantity,
+        pin: _pinController.text,
+      );
+
+      print('Exam purchase response: $response');
+      print(
+        'Response data keys: ${response['data']?.keys.toList() ?? "no data"}',
+      );
+      print('Transaction ID extracted: ${response['data']?['transactionId']}');
+      print('Amount extracted: ${response['data']?['amount']}');
+
+      if (mounted) {
+        setState(() => _isProcessing = false);
+
+        // Extract transaction details
+        final transactionId =
+            response['data']?['transactionId'] ??
+            response['data']?['transaction_id'] ??
+            response['data']?['tId'] ??
+            response['reference'] ??
+            'N/A';
+        final responseAmount = response['data']?['amount'];
+        final amount = responseAmount != null
+            ? responseAmount.toString()
+            : _totalAmount.toStringAsFixed(2);
+        final status = response['status'] == 'success' ? 'success' : 'failed';
+        final quantity = int.tryParse(_quantityController.text) ?? 1;
+
+        // Clear form
+        _quantityController.clear();
+        _quantityController.text = '1';
+        _pinController.clear();
+        setState(() {
+          _totalAmount = _selectedPrice * 1;
+        });
+
+        // Navigate to transaction details page with complete info
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => TransactionDetailsPage(
+                transactionId: transactionId.toString(),
+                initialStatus: status,
+                amount: amount,
+                phoneNumber: '',
+                network: _selectedExam ?? 'Exam',
+                planName: 'Exam Pin - $_selectedExam ($quantity)',
+                transactionDate: DateTime.now().toString(),
+                planValidity: '',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
+        _showErrorDialog(errorMessage);
+      }
     }
+  }
+
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text(
+          'Error',
+          style: TextStyle(
+            color: Color(0xFFce4323),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(fontSize: 14, color: Colors.black87),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'OK',
+              style: TextStyle(
+                color: Color(0xFFce4323),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showInsufficientBalanceDialog({
+    required double required,
+    required double available,
+  }) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text(
+          'Insufficient Balance',
+          style: TextStyle(
+            color: Color(0xFFce4323),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your wallet balance is insufficient to complete this purchase.',
+              style: TextStyle(fontSize: 14, color: Colors.black87),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Required:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      Text(
+                        '₦${required.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFce4323),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Available:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      Text(
+                        '₦${available.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Shortfall:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black54,
+                        ),
+                      ),
+                      Text(
+                        '₦${(required - available).toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Go Back',
+              style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w500),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              // Navigate to wallet/fund page
+              Navigator.pushNamed(context, '/wallet');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFce4323),
+            ),
+            child: const Text(
+              'Fund Wallet',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -477,77 +791,99 @@ class _ExamPinPageState extends State<ExamPinPage> {
                 ),
               ),
               const SizedBox(height: 16),
-              Center(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: _examProviders.map((provider) {
-                    final isSelected = _selectedExam == provider['name'];
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: GestureDetector(
-                        onTap: () {
-                          _loadPlansForProvider(provider['name']);
-                        },
-                        child: Container(
-                          width: 100,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            border: Border.all(
+              if (_isLoadingProviders)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: CircularProgressIndicator(color: Color(0xFFce4323)),
+                  ),
+                )
+              else
+                Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: _examProviders.map((provider) {
+                      final isSelected = _selectedExam == provider['name'];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _selectedExam = provider['name'];
+                              _selectedExamId = provider['id'];
+                              _selectedPrice = provider['price'] ?? 0;
+                            });
+                            _updateTotalAmount();
+                          },
+                          child: Container(
+                            width: 100,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: isSelected
+                                    ? const Color(0xFFce4323)
+                                    : Colors.grey.shade300,
+                                width: isSelected ? 2 : 1.5,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
                               color: isSelected
-                                  ? const Color(0xFFce4323)
-                                  : Colors.grey.shade300,
-                              width: isSelected ? 2 : 1.5,
+                                  ? const Color(0xFFce4323).withOpacity(0.1)
+                                  : Colors.white,
                             ),
-                            borderRadius: BorderRadius.circular(12),
-                            color: isSelected
-                                ? const Color(0xFFce4323).withOpacity(0.1)
-                                : Colors.white,
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                width: 60,
-                                height: 50,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Image.asset(
-                                  provider['logo'],
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Center(
-                                      child: Text(
-                                        provider['name'],
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Container(
+                                  width: 60,
+                                  height: 50,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Image.asset(
+                                    provider['logo'],
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Center(
+                                        child: Text(
+                                          provider['name'],
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
-                                      ),
-                                    );
-                                  },
+                                      );
+                                    },
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                provider['name'],
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                  color: isSelected
-                                      ? const Color(0xFFce4323)
-                                      : Colors.black,
+                                const SizedBox(height: 8),
+                                Text(
+                                  provider['name'],
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                    color: isSelected
+                                        ? const Color(0xFFce4323)
+                                        : Colors.black,
+                                  ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 4),
+                                Text(
+                                  '₦${provider['price']}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFFce4323),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  }).toList(),
+                      );
+                    }).toList(),
+                  ),
                 ),
-              ),
               const SizedBox(height: 24),
               const Text(
                 'Quantity',
@@ -584,6 +920,40 @@ class _ExamPinPageState extends State<ExamPinPage> {
                     horizontal: 12,
                     vertical: 12,
                   ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Amount display field
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.grey.shade50,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Amount',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    Text(
+                      '₦${_totalAmount.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFFce4323),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 32),

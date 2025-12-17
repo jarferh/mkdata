@@ -184,6 +184,7 @@ class DataPinService {
                     'plan' => $planId,
                     'quantity' => $quantity,
                     'name_on_card' => $nameOnCard,
+                    'name' => $nameOnCard,
                     'network' => $plan[0]['datanetwork']
                 ]),
                 CURLOPT_HTTPHEADER => [

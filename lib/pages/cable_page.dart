@@ -696,7 +696,7 @@ class _CablePageState extends State<CablePage> {
         (p) => p['id']?.toString() == _selectedPlanId?.toString(),
         orElse: () => {},
       );
-      if (selectedPlan != null && selectedPlan.isNotEmpty) {
+      if (selectedPlan.isNotEmpty) {
         amountDouble = (selectedPlan['price'] is double)
             ? selectedPlan['price'] as double
             : double.tryParse(selectedPlan['price']?.toString() ?? '0') ?? 0.0;
@@ -719,98 +719,96 @@ class _CablePageState extends State<CablePage> {
       String status = 'failed';
       String transactionId = '';
 
-      if (res != null) {
-        // Detect insufficient funds (HTTP 402) responses from backend.
-        // Backend may include numeric code fields or embed messages mentioning 'insufficient'.
-        final code =
-            (res['code'] ??
-            res['statusCode'] ??
-            res['status_code'] ??
-            res['httpCode'] ??
-            res['http_status']);
-        final msg = (res['message'] ?? '').toString().toLowerCase();
+      // Detect insufficient funds (HTTP 402) responses from backend.
+      // Backend may include numeric code fields or embed messages mentioning 'insufficient'.
+      final code =
+          (res['code'] ??
+          res['statusCode'] ??
+          res['status_code'] ??
+          res['httpCode'] ??
+          res['http_status']);
+      final msg = (res['message'] ?? '').toString().toLowerCase();
 
-        final isInsufficient =
-            (code != null && code.toString() == '402') ||
-            msg.contains('insufficient') ||
-            msg.contains('insufficient balance') ||
-            msg.contains('insufficient funds');
+      final isInsufficient =
+          (code != null && code.toString() == '402') ||
+          msg.contains('insufficient') ||
+          msg.contains('insufficient balance') ||
+          msg.contains('insufficient funds');
 
-        if (isInsufficient) {
-          // Try to extract balance details if available
-          String currentBalance = '';
-          String requiredAmount = '';
-          if (res['data'] is Map) {
-            currentBalance =
-                (res['data']['current_balance']?.toString() ??
-                res['data']['balance']?.toString() ??
-                '');
-            requiredAmount =
-                (res['data']['required_amount']?.toString() ??
-                res['data']['needed']?.toString() ??
-                '');
-          }
-
-          String details =
-              'Your wallet balance is insufficient to complete this purchase.';
-          if (currentBalance.isNotEmpty || requiredAmount.isNotEmpty) {
-            details =
-                'Current balance: ${currentBalance.isNotEmpty ? currentBalance : 'N/A'}\nRequired: ${requiredAmount.isNotEmpty ? requiredAmount : amountStr}';
-          }
-
-          if (!mounted) return;
-          // Show modal prompting user to top up. Do not open TransactionDetailsPage for insufficient balance.
-          _showErrorModal(
-            'Insufficient Balance',
-            details,
-            onRetry: () {
-              // User may retry after topping up; we simply close the modal and let them retry.
-            },
-          );
-
-          setState(() => _isProcessing = false);
-          return;
-        }
-
-        final rawStatus = (res['status'] ?? '').toString().toLowerCase();
-        if (rawStatus.contains('success')) {
-          status = 'success';
-        } else if (rawStatus.contains('process') ||
-            rawStatus.contains('pending')) {
-          status = 'processing';
-        } else {
-          status = 'failed';
-        }
-
-        if (res['data'] != null && res['data'] is Map) {
-          transactionId =
-              (res['data']['transactionId']?.toString() ??
-              res['data']['transaction_id']?.toString() ??
+      if (isInsufficient) {
+        // Try to extract balance details if available
+        String currentBalance = '';
+        String requiredAmount = '';
+        if (res['data'] is Map) {
+          currentBalance =
+              (res['data']['current_balance']?.toString() ??
+              res['data']['balance']?.toString() ??
+              '');
+          requiredAmount =
+              (res['data']['required_amount']?.toString() ??
+              res['data']['needed']?.toString() ??
               '');
         }
 
-        if (transactionId.isEmpty) {
-          transactionId =
-              (res['transactionId']?.toString() ??
-              res['transaction_id']?.toString() ??
-              '');
+        String details =
+            'Your wallet balance is insufficient to complete this purchase.';
+        if (currentBalance.isNotEmpty || requiredAmount.isNotEmpty) {
+          details =
+              'Current balance: ${currentBalance.isNotEmpty ? currentBalance : 'N/A'}\nRequired: ${requiredAmount.isNotEmpty ? requiredAmount : amountStr}';
         }
 
-        // If still empty try to parse JSON encoded message (server may embed details in message)
-        if (transactionId.isEmpty && res['message'] is String) {
-          try {
-            final parsed = jsonDecode(res['message']);
-            if (parsed is Map && parsed['transactionId'] != null) {
-              transactionId = parsed['transactionId'].toString();
-            } else if (parsed is Map && parsed['transaction_id'] != null) {
-              transactionId = parsed['transaction_id'].toString();
-            }
-          } catch (_) {
-            // ignore parse errors
-          }
-        }
+        if (!mounted) return;
+        // Show modal prompting user to top up. Do not open TransactionDetailsPage for insufficient balance.
+        _showErrorModal(
+          'Insufficient Balance',
+          details,
+          onRetry: () {
+            // User may retry after topping up; we simply close the modal and let them retry.
+          },
+        );
+
+        setState(() => _isProcessing = false);
+        return;
       }
 
+      final rawStatus = (res['status'] ?? '').toString().toLowerCase();
+      if (rawStatus.contains('success')) {
+        status = 'success';
+      } else if (rawStatus.contains('process') ||
+          rawStatus.contains('pending')) {
+        status = 'processing';
+      } else {
+        status = 'failed';
+      }
+
+      if (res['data'] != null && res['data'] is Map) {
+        transactionId =
+            (res['data']['transactionId']?.toString() ??
+            res['data']['transaction_id']?.toString() ??
+            '');
+      }
+
+      if (transactionId.isEmpty) {
+        transactionId =
+            (res['transactionId']?.toString() ??
+            res['transaction_id']?.toString() ??
+            '');
+      }
+
+      // If still empty try to parse JSON encoded message (server may embed details in message)
+      if (transactionId.isEmpty && res['message'] is String) {
+        try {
+          final parsed = jsonDecode(res['message']);
+          if (parsed is Map && parsed['transactionId'] != null) {
+            transactionId = parsed['transactionId'].toString();
+          } else if (parsed is Map && parsed['transaction_id'] != null) {
+            transactionId = parsed['transaction_id'].toString();
+          }
+        } catch (_) {
+          // ignore parse errors
+        }
+      }
+    
       if (!mounted) return;
 
       // Open the transaction details page so user can see success/failure/processing
@@ -860,7 +858,7 @@ class _CablePageState extends State<CablePage> {
 
       // Try to extract a transactionId from the error message if the server included one
       String transactionId = '';
-      final errMsg = e?.toString() ?? '';
+      final errMsg = e.toString() ?? '';
       if (errMsg.isNotEmpty) {
         try {
           final parsed = jsonDecode(errMsg);

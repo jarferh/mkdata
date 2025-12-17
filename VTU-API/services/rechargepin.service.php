@@ -3,6 +3,7 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
 
 use Binali\Config\Database;
+use Binali\Config\Config;
 
 class RechargePinService {
     private $db;
@@ -82,5 +83,79 @@ class RechargePinService {
             throw new Exception("Error recording transaction: " . $e->getMessage());
         }
     }
+
+    public function purchaseRechargePin($planId, $quantity, $userId, $pin) {
+        try {
+            // Card PIN purchase is not fully implemented yet
+            // The external provider integration is missing
+            // Return failure but still record the transaction attempt
+            error_log("RechargePinService: Card PIN purchase attempted but not implemented. PlanId=$planId, Quantity=$quantity, UserId=$userId");
+
+            // Get network price for record keeping
+            $networkPrices = [
+                'MTN' => 1000,
+                'Airtel' => 1000,
+                'Glo' => 1000,
+                '9mobile' => 1000,
+            ];
+            
+            if (!isset($networkPrices[$planId])) {
+                throw new Exception("Invalid network or plan: $planId");
+            }
+
+            $price = $networkPrices[$planId];
+            $totalAmount = $price * $quantity;
+
+            // Get user balance for record
+            $userQuery = "SELECT sWallet FROM subscribers WHERE sId = ?";
+            $userResult = $this->db->query($userQuery, [$userId]);
+            
+            if (empty($userResult)) {
+                throw new Exception("User not found");
+            }
+
+            $userBalance = $userResult[0]['sWallet'] ?? 0;
+            $transactionRef = "CARD_PIN_" . time() . "_" . rand(1000, 9999);
+
+            // Record failed transaction attempt (don't deduct balance)
+            $transactionQuery = "INSERT INTO transactions 
+                                (sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, date) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())";
+            
+            $this->db->execute($transactionQuery, [
+                $userId,
+                $transactionRef,
+                'card_pin',
+                'Card PIN Purchase Attempt - ' . $planId,
+                $totalAmount,
+                2,  // status: 2 = pending/failed
+                $userBalance,
+                $userBalance  // balance unchanged
+            ]);
+
+            $transactionId = $this->db->lastInsertId();
+            error_log("RechargePinService: Failed transaction recorded. TransactionID=$transactionId, Reference=$transactionRef");
+
+            return [
+                'status' => 'error',
+                'message' => 'Card PIN purchase service is currently unavailable. Please try again later.',
+                'data' => [
+                    'transactionId' => $transactionId,
+                    'amount' => $totalAmount,
+                    'quantity' => $quantity,
+                    'reference' => $transactionRef,
+                    'status' => 'failed'
+                ]
+            ];
+
+        } catch (Exception $e) {
+            error_log("RechargePinService: Error - " . $e->getMessage());
+            
+            return [
+                'status' => 'error',
+                'message' => $e->getMessage(),
+                'data' => null
+            ];
+        }
+    }
 }
-?>

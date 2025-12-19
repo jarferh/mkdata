@@ -1,0 +1,36 @@
+name: iOS Simulator Build (No Apple Account)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  ios-simulator:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: stable
+
+    - name: Install dependencies
+      run: flutter pub get
+
+    - name: iOS doctor check
+      run: flutter doctor -v
+
+    - name: Boot iPhone Simulator
+      run: |
+        xcrun simctl list devices
+        xcrun simctl boot "iPhone 15" || true
+
+    - name: Build for iOS Simulator
+      run: flutter build ios --simulator --debug
+
+    - name: Run basic tests (optional)
+      run: flutter test || true

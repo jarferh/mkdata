@@ -598,7 +598,7 @@ class _SpinAndWinPageState extends State<SpinAndWinPage> {
             ),
           ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 100),
         ],
       ),
     );

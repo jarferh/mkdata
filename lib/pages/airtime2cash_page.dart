@@ -14,7 +14,7 @@ class Airtime2CashPage extends StatefulWidget {
 }
 
 class _Airtime2CashPageState extends State<Airtime2CashPage> {
-  final _formKey = GlobalKey<FormState>();  
+  final _formKey = GlobalKey<FormState>();
 
   // Network selection
   String? _selectedNetwork;
@@ -316,7 +316,7 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-         iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: const IconThemeData(color: Colors.white),
         title: const Text('Airtime to Cash'),
         titleTextStyle: const TextStyle(
           color: Colors.white,
@@ -422,7 +422,7 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
   Widget _buildSubmitForm() {
     return SingleChildScrollView(
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 100.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -881,7 +881,7 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
     }
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       scrollDirection: Axis.horizontal,
       child: SingleChildScrollView(
         scrollDirection: Axis.vertical,

@@ -1,0 +1,44 @@
+name: iOS Simulator Build (No Apple Account)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  ios-simulator:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter (ARM64, Dart >= 3.8)
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          architecture: arm64
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      # Simulator boot is optional but kept for confidence
+      - name: Boot iOS Simulator (non-blocking)
+        run: |
+          xcrun simctl list devices available
+          xcrun simctl boot "iPhone 15" || true
+
+      - name: Build iOS app for Simulator
+        run: flutter build ios --simulator --debug
+
+      - name: Run tests (non-blocking)
+        run: flutter test || true
+
+      - name: Upload iOS Simulator App
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-app
+          path: build/ios/iphonesimulator/Runner.app

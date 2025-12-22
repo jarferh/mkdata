@@ -127,6 +127,17 @@ class _DailyDataPageState extends State<DailyDataPage> {
     return prefixes.contains(prefix);
   }
 
+  // Detect network name from a phone number by matching known prefixes.
+  String? _networkFromPhone(String phone) {
+    if (phone.isEmpty) return null;
+    for (final entry in networkPrefixes.entries) {
+      for (final p in entry.value) {
+        if (phone.startsWith(p)) return entry.key;
+      }
+    }
+    return null;
+  }
+
   bool _isNetworkEnabled(String networkName) {
     final normalized = networkName.toUpperCase();
     final status = _networkStatuses[normalized];
@@ -196,6 +207,20 @@ class _DailyDataPageState extends State<DailyDataPage> {
 
     _phoneController.addListener(() {
       final value = _phoneController.text.trim();
+
+      // Auto-detect network and refresh plans when the detected network changes
+      final detected = _networkFromPhone(value);
+      if (detected != null && detected != _selectedNetwork) {
+        setState(() {
+          _selectedNetwork = detected;
+          _selectedPlan = null;
+          _amountController.clear();
+          _daysController.text = '1';
+          _selectedDays = 1;
+        });
+        _handleNetworkOrTypeChange();
+      }
+
       final isValid = _isValidNetworkNumber(value, _selectedNetwork);
 
       if (isValid != _phoneValid ||
@@ -1522,12 +1547,12 @@ class _DailyDataPageState extends State<DailyDataPage> {
                                 child: Column(
                                   mainAxisAlignment:
                                       MainAxisAlignment.spaceBetween,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
                                     // Plan Name and Type
                                     Column(
                                       crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                          CrossAxisAlignment.center,
                                       children: [
                                         Container(
                                           padding: EdgeInsets.symmetric(
@@ -1592,9 +1617,11 @@ class _DailyDataPageState extends State<DailyDataPage> {
                                     // Validity and Price
                                     Column(
                                       crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                          CrossAxisAlignment.center,
                                       children: [
                                         Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
                                           children: [
                                             Icon(
                                               Icons.schedule,
@@ -1615,7 +1642,7 @@ class _DailyDataPageState extends State<DailyDataPage> {
                                               ),
                                             ),
                                             Text(
-                                              '${plan.validity}d',
+                                              '${plan.validity} ${int.parse(plan.validity) == 1 ? 'Day' : 'Days'}',
                                               style: TextStyle(
                                                 fontSize:
                                                     _getResponsiveFontSize(

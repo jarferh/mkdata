@@ -392,17 +392,22 @@ try {
 
             // Send push notification for all attempts (success and failure)
             try {
-                sendTransactionNotification(
-                    userId: (string)$userId,
-                    transactionType: 'data',
-                    transactionData: [
-                        'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
-                        'plan_id' => $planId,
-                        'network' => $networkId,
-                        'phone' => $phone,
-                        'status' => $response['status']
-                    ]
-                );
+                $notifStatus = $response['status'] ?? ($svcResult['status'] ?? 'failed');
+                // Only send notification for success or processing states
+                if (in_array($notifStatus, ['success', 'processing'], true)) {
+                    sendTransactionNotification(
+                        userId: (string)$userId,
+                        transactionType: 'data',
+                        transactionData: [
+                            'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
+                            'plan_id' => $planId,
+                            'network' => $networkId,
+                            'phone' => $phone,
+                            'status' => $notifStatus
+                        ]
+                    );
+                }
+                // Do not send a success-style notification when the purchase failed
             } catch (Exception $e) {
                 error_log('Notification error (non-blocking): ' . $e->getMessage());
             }

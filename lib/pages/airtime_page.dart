@@ -65,6 +65,17 @@ class _AirtimePageState extends State<AirtimePage> {
     return prefixes.contains(prefix);
   }
 
+  // Detect network name from a phone number by matching known prefixes.
+  String? _networkFromPhone(String phone) {
+    if (phone.isEmpty) return null;
+    for (final entry in networkPrefixes.entries) {
+      for (final p in entry.value) {
+        if (phone.startsWith(p)) return entry.key;
+      }
+    }
+    return null;
+  }
+
   final _phoneController = TextEditingController();
   final FocusNode _phoneFocusNode = FocusNode();
   final _amountController = TextEditingController();
@@ -112,8 +123,17 @@ class _AirtimePageState extends State<AirtimePage> {
     _initConnectivity();
     // clear validation state when user edits the phone field
     _phoneController.addListener(() {
-      // Validate number as the user types and update inline state.
       final value = _phoneController.text.trim();
+
+      // Auto-detect network from the number (if any)
+      final detected = _networkFromPhone(value);
+      if (detected != null && detected != _selectedNetwork) {
+        setState(() {
+          _selectedNetwork = detected;
+        });
+      }
+
+      // Validate number as the user types and update inline state.
       final isValid = _isValidNetworkNumber(value, _selectedNetwork);
 
       // Update inline error, valid flag and auto-toggle the "Verify Number" switch
@@ -996,6 +1016,39 @@ class _AirtimePageState extends State<AirtimePage> {
         // Wait a brief moment before navigating
         await Future.delayed(const Duration(milliseconds: 1500));
 
+        // Ensure loading dialog is dismissed (if still shown)
+        if (mounted && Navigator.canPop(context)) {
+          try {
+            Navigator.pop(context);
+          } catch (_) {}
+        }
+
+        // Capture final fallbacks for amount/phone/network
+        String finalAmount = _amountController.text;
+        if (finalAmount.isEmpty) {
+          final candidate =
+              response['data']?['amount'] ??
+              response['amount'] ??
+              response['data']?['data']?['amount'] ??
+              response['data']?['data']?['chargedAmount'] ??
+              response['data']?['data']?['price'] ??
+              response['data']?['chargedAmount'] ??
+              response['data']?['price'];
+          finalAmount = candidate?.toString() ?? '0';
+        }
+
+        final String finalPhone = _phoneController.text.isNotEmpty
+            ? _phoneController.text
+            : (response['data']?['phone'] ?? response['phone'] ?? '');
+        final String finalNetwork = _selectedNetwork.isNotEmpty
+            ? _selectedNetwork
+            : (response['data']?['network'] ?? response['network'] ?? '');
+
+        // Clear controllers before navigation
+        _phoneController.clear();
+        _amountController.clear();
+        _pinController.clear();
+
         if (mounted) {
           Navigator.pushReplacement(
             context,
@@ -1005,9 +1058,9 @@ class _AirtimePageState extends State<AirtimePage> {
                     response['data']?['data']?['transactionId'] ??
                     response['data']?['transactionId'] ??
                     '',
-                amount: _amountController.text,
-                phoneNumber: _phoneController.text,
-                network: _selectedNetwork,
+                amount: finalAmount,
+                phoneNumber: finalPhone,
+                network: finalNetwork,
                 initialStatus: initialStatus,
                 planName: 'Airtime Top-up',
                 transactionDate: DateTime.now().toString(),

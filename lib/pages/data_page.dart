@@ -126,6 +126,17 @@ class _DataPageState extends State<DataPage> {
     return prefixes.contains(prefix);
   }
 
+  // Detect network name from a phone number by matching known prefixes.
+  String? _networkFromPhone(String phone) {
+    if (phone.isEmpty) return null;
+    for (final entry in networkPrefixes.entries) {
+      for (final p in entry.value) {
+        if (phone.startsWith(p)) return entry.key;
+      }
+    }
+    return null;
+  }
+
   // Helper: check if a network is enabled for data purchase
   bool _isNetworkEnabled(String networkName) {
     final normalized = networkName.toUpperCase();
@@ -227,6 +238,18 @@ class _DataPageState extends State<DataPage> {
     // "Verify Number" switch when the number becomes valid.
     _phoneController.addListener(() {
       final value = _phoneController.text.trim();
+
+      // Auto-detect network from the number and trigger plan refresh when it changes
+      final detected = _networkFromPhone(value);
+      if (detected != null && detected != _selectedNetwork) {
+        setState(() {
+          _selectedNetwork = detected;
+          _selectedPlan = null;
+          _amountController.clear();
+        });
+        _handleNetworkOrTypeChange();
+      }
+
       final isValid = _isValidNetworkNumber(value, _selectedNetwork);
 
       if (isValid != _phoneValid ||
@@ -1780,12 +1803,12 @@ class _DataPageState extends State<DataPage> {
                                 child: Column(
                                   mainAxisAlignment:
                                       MainAxisAlignment.spaceBetween,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
                                     // Plan Name and Type
                                     Column(
                                       crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                          CrossAxisAlignment.center,
                                       children: [
                                         Container(
                                           padding: EdgeInsets.symmetric(
@@ -1850,9 +1873,11 @@ class _DataPageState extends State<DataPage> {
                                     // Validity and Price
                                     Column(
                                       crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                          CrossAxisAlignment.center,
                                       children: [
                                         Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
                                           children: [
                                             Icon(
                                               Icons.schedule,
@@ -1873,7 +1898,7 @@ class _DataPageState extends State<DataPage> {
                                               ),
                                             ),
                                             Text(
-                                              '${plan.validity}d',
+                                              '${plan.validity} ${int.parse(plan.validity) == 1 ? 'Day' : 'Days'}',
                                               style: TextStyle(
                                                 fontSize:
                                                     _getResponsiveFontSize(
@@ -1901,7 +1926,7 @@ class _DataPageState extends State<DataPage> {
                                           style: TextStyle(
                                             fontSize: _getResponsiveFontSize(
                                               context,
-                                              17,
+                                              18,
                                             ),
                                             fontWeight: FontWeight.bold,
                                             color: isSelected

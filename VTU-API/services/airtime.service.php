@@ -7,6 +7,7 @@ use Binali\Config\Database;
 use Binali\Config\Config;
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
+require_once __DIR__ . '/../api/notifications/send.php';
 
 class AirtimeService {
     private $db;
@@ -315,6 +316,19 @@ class AirtimeService {
             // Map internal transactionStatus to API response status:
             // 0 => success, 1 => failed, 2 => processing
             if ($transactionStatus === 0) {
+                // Send success notification
+                try {
+                    sendTransactionNotification($userId, 'airtime', [
+                        'status' => 'success',
+                        'amount' => $faceAmount,
+                        'network' => $network,
+                        'phone' => $phone,
+                        'reference' => $reference
+                    ]);
+                } catch (Exception $notifErr) {
+                    error_log("Notification send error (non-critical): " . $notifErr->getMessage());
+                }
+                
                 return [
                     'status' => 'success',
                     'message' => $responseMessage,
@@ -329,6 +343,19 @@ class AirtimeService {
                     ]
                 ];
             } else if ($transactionStatus === 2) {
+                // Send processing notification
+                try {
+                    sendTransactionNotification($userId, 'airtime', [
+                        'status' => 'processing',
+                        'amount' => $faceAmount,
+                        'network' => $network,
+                        'phone' => $phone,
+                        'reference' => $reference
+                    ]);
+                } catch (Exception $notifErr) {
+                    error_log("Notification send error (non-critical): " . $notifErr->getMessage());
+                }
+                
                 return [
                     'status' => 'processing',
                     'message' => $responseMessage,
@@ -338,6 +365,19 @@ class AirtimeService {
                     ]
                 ];
             } else {
+                // Send failure notification
+                try {
+                    sendTransactionNotification($userId, 'airtime', [
+                        'status' => 'failed',
+                        'amount' => $faceAmount,
+                        'network' => $network,
+                        'phone' => $phone,
+                        'reference' => $reference
+                    ]);
+                } catch (Exception $notifErr) {
+                    error_log("Notification send error (non-critical): " . $notifErr->getMessage());
+                }
+                
                 return [
                     'status' => 'failed',
                     'message' => $responseMessage,
@@ -375,6 +415,20 @@ class AirtimeService {
                     ]);
                 } catch (Exception $logError) {
                     error_log("Error logging failed transaction: " . $logError->getMessage());
+                }
+                
+                // Send failure notification
+                try {
+                    sendTransactionNotification($userId, 'airtime', [
+                        'status' => 'failed',
+                        'amount' => $amount,
+                        'network' => $network ?? null,
+                        'phone' => $phone,
+                        'reference' => $reference,
+                        'error' => $errorMessage
+                    ]);
+                } catch (Exception $notifErr) {
+                    error_log("Notification send error (non-critical): " . $notifErr->getMessage());
                 }
             }
 

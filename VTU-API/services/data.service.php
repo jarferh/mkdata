@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../api/notifications/send.php';
 
 use Binali\Config\Database;
 
@@ -445,6 +446,21 @@ public function purchaseData($networkId, $phoneNumber, $planCode, $userId) {
     $this->db->query("UPDATE transactions SET status = ?, api_response = ?, newbal = ?, profit = ? WHERE tId = ?", [$status, $response, (string)$finalNewBal, $profit, $transactionId]);
         $this->db->commit();
 
+        // Send notification based on transaction status
+        try {
+            $notificationStatus = ($status === 0) ? 'success' : ($status === 2 ? 'processing' : 'failed');
+            sendTransactionNotification($userId, 'data', [
+                'status' => $notificationStatus,
+                'amount' => $planPrice,
+                'network' => $networkId,
+                'plan' => $plan['name'] ?? 'Data Bundle',
+                'phone' => $phoneNumber,
+                'reference' => $reference
+            ]);
+        } catch (Exception $notifErr) {
+            error_log("Notification send error (non-critical): " . $notifErr->getMessage());
+        }
+
         return [
             'status' => $status === 0 ? 'success' : ($status === 2 ? 'processing' : 'failed'),
             'message' => $message,
@@ -463,6 +479,21 @@ public function purchaseData($networkId, $phoneNumber, $planCode, $userId) {
             $this->db->query("UPDATE transactions SET status = 1, api_response = ? WHERE tId = ?", [json_encode(['error' => $e->getMessage()]), $transactionId]);
             // No need to refund since we haven't deducted yet
             $this->db->commit();
+            
+            // Send failure notification
+            try {
+                sendTransactionNotification($userId, 'data', [
+                    'status' => 'failed',
+                    'amount' => $planPrice ?? null,
+                    'network' => $networkId ?? null,
+                    'plan' => $plan['name'] ?? 'Data Bundle',
+                    'phone' => $phoneNumber ?? null,
+                    'reference' => $reference ?? null,
+                    'error' => $e->getMessage()
+                ]);
+            } catch (Exception $notifErr) {
+                error_log("Notification send error (non-critical): " . $notifErr->getMessage());
+            }
         } elseif ($this->db->inTransaction()) {
             $this->db->rollBack();
         }

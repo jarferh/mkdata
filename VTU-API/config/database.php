@@ -5,9 +5,12 @@ use PDO;
 use PDOException;
 use Exception;
 
+// Set timezone to GMT+1 (Africa/Lagos)
+date_default_timezone_set('Africa/Lagos');
+
 if (!class_exists('Binali\Config\Database')) {
     class Database {    
-        private string $host = "localhost";
+        private string $host = "127.0.0.1";
         private string $db_name = "entafhdn_mkdata";
         private string $username = "entafhdn_mkdata";
         private string $password = "entafhdn_mkdata";
@@ -16,9 +19,13 @@ if (!class_exists('Binali\Config\Database')) {
     public function __construct() {
         try {
             error_log("Attempting to establish database connection...");
-            $dsn = "mysql:host=" . $this->host . ";dbname=" . $this->db_name;
+            $dsn = "mysql:host=" . $this->host . ";dbname=" . $this->db_name . ";charset=utf8mb4";
             $this->conn = new PDO($dsn, $this->username, $this->password);
             $this->conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            
+            // Set database timezone to GMT+1
+            $this->conn->exec("SET time_zone = '+01:00'");
+            
             error_log("Database connection established successfully");
         } catch(PDOException $e) {
             error_log("Connection Error: " . $e->getMessage());

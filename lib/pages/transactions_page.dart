@@ -18,6 +18,7 @@ class Transaction {
   final double newBalance;
   final double profit;
   final DateTime date;
+  final String token;
 
   Transaction({
     required this.id,
@@ -31,6 +32,7 @@ class Transaction {
     required this.newBalance,
     required this.profit,
     required this.date,
+    required this.token,
   });
 
   factory Transaction.fromJson(Map<String, dynamic> json) {
@@ -46,6 +48,7 @@ class Transaction {
       newBalance: double.parse(json['newbal'].toString()),
       profit: double.parse(json['profit'].toString()),
       date: DateTime.parse(json['date']),
+      token: json['token'] ?? '',
     );
   }
 
@@ -483,6 +486,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
                 fromTransactions: true,
                 oldBalance: transaction.oldBalance.toStringAsFixed(2),
                 newBalance: transaction.newBalance.toStringAsFixed(2),
+                token: transaction.token,
               ),
             ),
           );

@@ -22,6 +22,7 @@ class TransactionDetailsPage extends StatefulWidget {
   final bool fromTransactions;
   final String? oldBalance;
   final String? newBalance;
+  final String? token;
 
   const TransactionDetailsPage({
     super.key,
@@ -37,6 +38,7 @@ class TransactionDetailsPage extends StatefulWidget {
     this.fromTransactions = false,
     this.oldBalance,
     this.newBalance,
+    this.token,
   });
 
   @override
@@ -389,6 +391,10 @@ class _TransactionDetailsPageState extends State<TransactionDetailsPage> {
             _buildDetailRow('Date', widget.transactionDate),
             const Divider(height: 20),
             _buildDetailRow('Transaction ID', widget.transactionId),
+            if (widget.token != null && widget.token!.isNotEmpty) ...[
+              const Divider(height: 20),
+              _buildDetailRow('Token', widget.token!),
+            ],
             const Divider(height: 20),
             _buildDetailRow('Information', _getInformationText()),
           ],

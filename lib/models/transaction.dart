@@ -59,4 +59,42 @@ class Transaction {
         return 'Unknown';
     }
   }
+
+  String? get token {
+    if (apiResponse == null || apiResponse!.isEmpty) return null;
+
+    try {
+      // Try to parse as JSON
+      final jsonStr = apiResponse!.trim();
+      if (jsonStr.startsWith('{')) {
+        // It's already JSON
+        final response = jsonStr;
+        // Simple extraction without full JSON parsing to avoid dependencies
+        // Look for "Token" field
+        final tokenMatch = RegExp(
+          r'"Token"\s*:\s*"([^"]*)"',
+        ).firstMatch(response);
+        if (tokenMatch != null) {
+          return tokenMatch.group(1);
+        }
+        // Look for "token" field
+        final tokenMatch2 = RegExp(
+          r'"token"\s*:\s*"([^"]*)"',
+        ).firstMatch(response);
+        if (tokenMatch2 != null) {
+          return tokenMatch2.group(1);
+        }
+        // Look for "purchased_code" field
+        final codeMatch = RegExp(
+          r'"purchased_code"\s*:\s*"([^"]*)"',
+        ).firstMatch(response);
+        if (codeMatch != null) {
+          return codeMatch.group(1);
+        }
+      }
+    } catch (e) {
+      return null;
+    }
+    return null;
+  }
 }

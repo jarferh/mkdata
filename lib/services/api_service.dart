@@ -803,6 +803,25 @@ class ApiService {
     }
   }
 
+  // Validate Smart Card / IUC number (cable verification)
+  Future<Map<String, dynamic>> validateIUCNumber({
+    required String iucNumber,
+    required String providerId,
+  }) async {
+    try {
+      final response = await _client.post(
+        Uri.parse('$baseUrl/api/validate-iuc'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'iucNumber': iucNumber, 'providerId': providerId}),
+      );
+
+      final parsed = _handleResponse(response);
+      return parsed;
+    } catch (e) {
+      return {'status': 'error', 'message': e.toString()};
+    }
+  }
+
   // Fetch Data Pin Plans
   Future<Map<String, dynamic>> getDataPinPlans({
     String? network,

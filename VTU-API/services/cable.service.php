@@ -91,8 +91,8 @@ class CableService {
                 throw new Exception("Invalid verification configuration");
             }
 
-            // Get provider name for the API
-            $query = "SELECT provider FROM cableid WHERE cId = ? AND providerStatus = 'On'";
+            // Get provider name and cableid for the API
+            $query = "SELECT provider, cableid FROM cableid WHERE cId = ? AND providerStatus = 'On'";
             $providerResult = $this->db->query($query, [$providerId]);
             if (empty($providerResult)) {
                 throw new Exception("Invalid or inactive provider");
@@ -109,7 +109,39 @@ class CableService {
             $method = 'POST';
             $postData = null;
 
-            if (strpos(strtolower($verificationUrl), 'n3tdata.com') !== false || 
+            if (strpos(strtolower($verificationUrl), 'strowallet.com') !== false) {
+                // Strowallet verification endpoint expects public_key, service_id and customer_id
+                // Map our provider names to strowallet service ids
+                $serviceMap = [
+                    'dstv' => 'dstv',
+                    'gotv' => 'gotv',
+                    'startimes' => 'startimes',
+                    'showmax' => 'showmax'
+                ];
+
+                // Try to derive service_id from cable provider name or cableid field
+                $provKey = strtolower(preg_replace('/[^a-z0-9]/', '', $cableProvider));
+                $serviceId = null;
+                foreach ($serviceMap as $k => $v) {
+                    if (strpos($provKey, $k) !== false) {
+                        $serviceId = $v;
+                        break;
+                    }
+                }
+                // Fallback: try to use cableid (string) if provided in DB
+                if ($serviceId === null) {
+                    $serviceId = strtolower($providerResult[0]['cableid'] ?? '');
+                }
+
+                // Debug: log resolved service id to help diagnose empty values
+                error_log("IUC Verification - resolved service_id: " . ($serviceId !== null ? $serviceId : 'NULL'));
+
+                $postData = json_encode([
+                    'public_key' => $apiKey,
+                    'service_id' => $serviceId,
+                    'customer_id' => $iucNumber
+                ]);
+            } else if (strpos(strtolower($verificationUrl), 'n3tdata.com') !== false || 
                 strpos(strtolower($verificationUrl), 'n3tdata247') !== false) {
                 // N3tdata API format
                 $postData = json_encode([
@@ -144,6 +176,18 @@ class CableService {
                 error_log("IUC Verification Request - Data: " . $postData);
             }
 
+            // Build headers conditionally (Strowallet uses public_key in body, no Authorization header)
+            $isStrowallet = (strpos(strtolower($verificationUrl), 'strowallet.com') !== false);
+            $headers = [
+                'Accept: application/json'
+            ];
+            if (!$isStrowallet && !empty($authType)) {
+                $headers[] = "Authorization: {$authType} {$apiKey}";
+            }
+            if ($method === 'POST' && $postData) {
+                $headers[] = 'Content-Type: application/json';
+            }
+
             $curlOpts = array(
                 CURLOPT_URL => $verificationUrl,
                 CURLOPT_RETURNTRANSFER => true,
@@ -154,15 +198,10 @@ class CableService {
                 CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                 CURLOPT_CUSTOMREQUEST => $method,
                 CURLOPT_SSL_VERIFYPEER => false, // Some APIs might use self-signed certs
-                CURLOPT_HTTPHEADER => array(
-                    'Accept: application/json',
-                    "Authorization: {$authType} {$apiKey}"
-                )
+                CURLOPT_HTTPHEADER => $headers
             );
 
-            // Add Content-Type and POST data only for POST requests
             if ($method === 'POST' && $postData) {
-                $curlOpts[CURLOPT_HTTPHEADER][] = 'Content-Type: application/json';
                 $curlOpts[CURLOPT_POSTFIELDS] = $postData;
             }
 
@@ -186,17 +225,53 @@ class CableService {
                 throw new Exception("Invalid JSON response from verification service");
             }
 
+            // Some providers (including Strowallet) use a top-level 'success' boolean
+            if (isset($result['success'])) {
+                $s = $result['success'];
+                if ($s === true || (is_string($s) && strtolower($s) === 'true')) {
+                    // Populate message if available
+                    $message = $result['message'] ?? $message;
+                    // Keep details for return
+                    $details = $result;
+                    // Attempt to extract customer name from common locations
+                    $customerName = $result['response']['content']['CustomerName'] ?? $result['response']['content']['customer_name'] ?? $result['CustomerName'] ?? $result['customer_name'] ?? null;
+                    if ($customerName) {
+                        return [
+                            'status' => true,
+                            'message' => 'Customer Name: ' . $customerName,
+                            'details' => $result
+                        ];
+                    }
+                    // If success but no explicit name, we'll continue normal checks below
+                }
+            }
+
             // For 403 responses with 'Invalid IUC NUMBER', provide a clearer message
             if ($httpCode == 403 && 
                 isset($result['message']) && 
-                strtolower($result['message']) === 'invalid iuc number') {
-                throw new Exception("The IUC/Smart Card number provided is not valid. Please check and try again.");
+                (is_string($result['message']) && strtolower($result['message']) === 'invalid iuc number')) {
+                // Return structured error instead of throwing
+                return [
+                    'status' => false,
+                    'message' => 'The IUC/Smart Card number provided is not valid. Please check and try again.',
+                    'details' => $result
+                ];
             }
 
-            // For other error status codes
+            // For other error status codes, return structured error
             if ($httpCode >= 400) {
                 $errorMsg = isset($result['message']) ? $result['message'] : "Unknown error occurred";
-                throw new Exception("API Error (HTTP $httpCode): " . $errorMsg);
+                // Flatten array messages if present
+                if (is_array($errorMsg)) {
+                    $flat = [];
+                    array_walk_recursive($errorMsg, function($v) use (&$flat) { $flat[] = (string)$v; });
+                    $errorMsg = implode('; ', $flat);
+                }
+                return [
+                    'status' => false,
+                    'message' => "API Error (HTTP $httpCode): " . (is_string($errorMsg) ? $errorMsg : json_encode($errorMsg)),
+                    'details' => $result
+                ];
             }
 
             // Initialize response variables
@@ -233,10 +308,12 @@ class CableService {
                 
                 // Check for customer name in various possible response formats
                 if (isset($result['name']) || isset($result['customer_name']) || 
-                    isset($result['data']['name']) || isset($result['data']['customer_name'])) {
+                    isset($result['data']['name']) || isset($result['data']['customer_name']) ||
+                    isset($result['response']['content']['CustomerName']) || isset($result['response']['content']['CustomerName'])) {
                     $status = true;
                     $customerName = $result['name'] ?? $result['customer_name'] ?? 
-                                  $result['data']['name'] ?? $result['data']['customer_name'];
+                                  $result['data']['name'] ?? $result['data']['customer_name'] ??
+                                  ($result['response']['content']['CustomerName'] ?? $result['response']['content']['customer_name'] ?? null);
                     $message = "Customer Name: " . $customerName;
                     $details = $result;
                 }
@@ -250,17 +327,49 @@ class CableService {
                 ];
             }
 
-            throw new Exception($message);
+            // If we reach here, treat as verification failure and return structured error
+            // Flatten possible array messages from provider
+            $finalMsg = $message;
+            if (isset($result['message'])) {
+                $m = $result['message'];
+                if (is_array($m)) {
+                    $flat = [];
+                    array_walk_recursive($m, function($v) use (&$flat) { $flat[] = (string)$v; });
+                    $finalMsg = implode('; ', $flat);
+                } else if (is_string($m)) {
+                    $finalMsg = $m;
+                }
+            }
+
+            return [
+                'status' => false,
+                'message' => $finalMsg ?: 'IUC verification failed',
+                'details' => $result
+            ];
 
         } catch (Exception $e) {
-            // Log the error for debugging
+            // Log the error for debugging and return structured error
             error_log("IUC Verification Error: " . $e->getMessage());
-            throw new Exception("Error validating IUC number: " . $e->getMessage());
+            return [
+                'status' => false,
+                'message' => 'Error validating IUC number: ' . $e->getMessage(),
+                'details' => null
+            ];
         }
     }
 
-    public function processCableSubscription($providerId, $planId, $iucNumber, $phoneNumber, $amount, $pin) {
+    public function processCableSubscription($providerId, $planId, $iucNumber, $phoneNumber, $amount, $pin, $userId = null) {
         try {
+            // Log the initial request
+            error_log("=== CABLE SUBSCRIPTION INIT START ===");
+            error_log("Provider ID: " . $providerId);
+            error_log("Plan ID: " . $planId);
+            error_log("IUC Number: " . $iucNumber);
+            error_log("Phone Number: " . $phoneNumber);
+            error_log("Amount: " . $amount);
+            error_log("User ID: " . $userId);
+            error_log("=== CABLE SUBSCRIPTION INIT END ===");
+            
             // Validate required parameters
             $missingParams = [];
             if (empty($providerId)) $missingParams[] = 'providerId';
@@ -269,6 +378,7 @@ class CableService {
             if (empty($phoneNumber)) $missingParams[] = 'phoneNumber';
             if (empty($amount)) $missingParams[] = 'amount';
             if (empty($pin)) $missingParams[] = 'pin';
+            if (empty($userId)) $missingParams[] = 'userId';
 
             if (!empty($missingParams)) {
                 throw new Exception("Missing required parameters: " . implode(", ", $missingParams));
@@ -276,10 +386,10 @@ class CableService {
 
             // Check user's balance
             $query = "SELECT sWallet FROM subscribers WHERE sId = ?";
-            $balanceResult = $this->db->query($query, [1]); // Using 1 as default sId for now
+            $balanceResult = $this->db->query($query, [$userId]);
             
             if (empty($balanceResult)) {
-                throw new Exception("Unable to retrieve user's wallet balance");
+                throw new Exception("User not found or wallet not accessible");
             }
             
             $userBalance = $balanceResult[0]['sWallet'];
@@ -313,14 +423,14 @@ class CableService {
 
             try {
                 // Get current balance again within transaction
-                $balanceResult = $this->db->query("SELECT sWallet FROM subscribers WHERE sId = ?", [1]);
+                $balanceResult = $this->db->query("SELECT sWallet FROM subscribers WHERE sId = ?", [$userId]);
                 $oldBalance = $balanceResult[0]['sWallet'];
                 $newBalance = $oldBalance - $amount;
 
                 // Update user's wallet balance
                 $this->db->query(
                     "UPDATE subscribers SET sWallet = sWallet - ? WHERE sId = ?",
-                    [$amount, 1] // Using 1 as default sId
+                    [$amount, $userId]
                 );
 
                 // Insert into transactions table
@@ -333,7 +443,7 @@ class CableService {
                 
                 $this->db->query(
                     $transactionQuery, 
-                    [1, $transRef, $serviceDesc, $amount, $oldBalance, $newBalance] // Using 1 as default sId for now
+                    [$userId, $transRef, $serviceDesc, $amount, $oldBalance, $newBalance]
                 );
                 
                 // Get the last inserted ID using the database helper
@@ -346,8 +456,13 @@ class CableService {
                 }
                 $details = $providerDetails[0];
 
-                // Get provider name
+                // Get provider name and cableid for service_id derivation
                 $cableProvider = $plan[0]['providerName'];
+                
+                // Fetch cableid from the cableid table for service_id derivation
+                $cableIdQuery = "SELECT cableid FROM cableid WHERE cId = ? AND providerStatus = 'On'";
+                $cableIdResult = $this->db->query($cableIdQuery, [$providerId]);
+                $cableId = !empty($cableIdResult) ? $cableIdResult[0]['cableid'] : null;
                 
                 // Initialize purchase request
                 $curl = curl_init();
@@ -363,7 +478,44 @@ class CableService {
                 );
 
                 // Determine API type and set request data
-                if (strpos($purchaseUrl, 'n3tdata.com') !== false || 
+                if (strpos($purchaseUrl, 'strowallet.com') !== false) {
+                    // Strowallet purchase format
+                    $serviceMap = [
+                        'dstv' => 'dstv',
+                        'gotv' => 'gotv',
+                        'startimes' => 'startimes',
+                        'showmax' => 'showmax'
+                    ];
+
+                    $provKey = strtolower(preg_replace('/[^a-z0-9]/', '', $cableProvider));
+                    $serviceId = null;
+                    foreach ($serviceMap as $k => $v) {
+                        if (strpos($provKey, $k) !== false) {
+                            $serviceId = $v;
+                            break;
+                        }
+                    }
+                    if ($serviceId === null) {
+                        $serviceId = strtolower($cableId ?? '');
+                    }
+
+                    // Debug: log resolved service id
+                    error_log("Cable Purchase - resolved service_id: " . ($serviceId !== null && $serviceId !== '' ? $serviceId : 'EMPTY'));
+
+                    // Use plan name as service_name and planid as variation_code where available
+                    $serviceName = $plan[0]['name'] ?? '';
+                    $variationCode = $plan[0]['planid'] ?? $planId;
+
+                    $postData = json_encode([
+                        'public_key' => $details['verificationKey'] ?? $apiKey,
+                        'amount' => (string)$amount,
+                        'phone' => (string)$phoneNumber,
+                        'service_name' => $serviceName,
+                        'service_id' => $serviceId,
+                        'variation_code' => (string)$variationCode,
+                        'customer_id' => (string)$iucNumber
+                    ]);
+                } elseif (strpos($purchaseUrl, 'n3tdata.com') !== false || 
                     strpos($purchaseUrl, 'n3tdata247') !== false) {
                     $postData = json_encode([
                         'request-id' => $transRef,
@@ -374,7 +526,7 @@ class CableService {
                     ]);
                 } else {
                     $postData = json_encode([
-                        'cablename' => $cableProvider,
+                        'cablename' => $providerId,
                         'cable' => $providerId,
                         // Include multiple common keys some providers expect
                         'smart_card_number' => $iucNumber,
@@ -393,6 +545,22 @@ class CableService {
                     ]);
                 }
 
+                // Log the outgoing request
+                error_log("=== CABLE SUBSCRIPTION REQUEST START ===");
+                error_log("Transaction ID: " . $transactionId);
+                error_log("Transaction Ref: " . $transRef);
+                error_log("URL: " . $purchaseUrl);
+                error_log("API Key: " . substr($apiKey, 0, 10) . "...");
+                error_log("Request Data: " . $postData);
+                error_log("=== CABLE SUBSCRIPTION REQUEST END ===");
+
+                // Set headers conditionally for Strowallet (no Authorization header, public_key in body)
+                $isStrowalletPurchase = (strpos($purchaseUrl, 'strowallet.com') !== false);
+                $headers = ['Content-Type: application/json'];
+                if (!$isStrowalletPurchase) {
+                    $headers[] = 'Authorization: Token ' . $apiKey;
+                }
+
                 curl_setopt_array($curl, array(
                     CURLOPT_URL => $purchaseUrl,
                     CURLOPT_RETURNTRANSFER => true,
@@ -403,25 +571,59 @@ class CableService {
                     CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                     CURLOPT_CUSTOMREQUEST => 'POST',
                     CURLOPT_POSTFIELDS => $postData,
-                    CURLOPT_HTTPHEADER => array(
-                        'Content-Type: application/json',
-                        'Authorization: Token ' . $apiKey
-                    ),
+                    CURLOPT_HTTPHEADER => $headers,
                 ));
 
                 $response = curl_exec($curl);
                 $err = curl_error($curl);
                 curl_close($curl);
 
+                // Log the response
+                error_log("=== CABLE SUBSCRIPTION RESPONSE START ===");
+                error_log("Transaction ID: " . $transactionId);
+                error_log("Transaction Ref: " . $transRef);
+                if ($err) {
+                    error_log("CURL Error: " . $err);
+                }
+                error_log("Raw Response: " . $response);
+                error_log("=== CABLE SUBSCRIPTION RESPONSE END ===");
+
                 if ($err) {
                     throw new Exception("Connection error: " . $err);
                 }
 
                 $result = json_decode($response, true);
+                
+                // Log the parsed result
+                error_log("=== CABLE SUBSCRIPTION PARSED RESULT START ===");
+                error_log("Transaction ID: " . $transactionId);
+                error_log("Parsed Result: " . json_encode($result));
+                error_log("=== CABLE SUBSCRIPTION PARSED RESULT END ===");
+                
                 $status = 'PENDING';
                 $message = 'Transaction processing';
 
-                if (isset($result['status'])) {
+                // Check for error responses first
+                // Treat explicit success boolean from some providers (e.g., Strowallet)
+                if (isset($result['success'])) {
+                    $s = $result['success'];
+                    if ($s === true || (is_string($s) && strtolower($s) === 'true')) {
+                        $status = 'SUCCESS';
+                        $message = $result['message'] ?? 'Subscription successful';
+                    } elseif ($s === false || (is_string($s) && strtolower($s) === 'false')) {
+                        $status = 'FAILED';
+                        $message = $result['message'] ?? 'Subscription failed';
+                    }
+                }
+
+                if (isset($result['error'])) {
+                    $status = 'FAILED';
+                    if (is_array($result['error']) && !empty($result['error'])) {
+                        $message = $result['error'][0];
+                    } else {
+                        $message = $result['error'];
+                    }
+                } elseif (isset($result['status'])) {
                     $apiStatus = strtolower($result['status']);
                     if ($apiStatus == 'success' || $apiStatus == 'successful') {
                         $status = 'SUCCESS';
@@ -431,6 +633,13 @@ class CableService {
                         $message = $result['message'] ?? 'Transaction failed';
                     }
                 }
+                
+                // Log the status determination
+                error_log("=== CABLE SUBSCRIPTION STATUS DETERMINATION ===");
+                error_log("Transaction ID: " . $transactionId);
+                error_log("Determined Status: " . $status);
+                error_log("Message: " . $message);
+                error_log("=== END STATUS DETERMINATION ===");
                 
                 // Update transaction status
                 $updateQuery = "UPDATE transactions 
@@ -443,12 +652,31 @@ class CableService {
                 $responseData = json_encode([
                     'api_response' => $result,
                     'message' => $message,
-                    'reference' => $transRef
+                    'reference' => $transRef,
+                    'provider_txn' => $providerTxn
                 ]);
+                // Try to extract provider transaction id / reference from common locations
+                $providerTxn = null;
+                if (is_array($result)) {
+                    $providerTxn = $result['transactionId'] ?? $result['transaction_id'] ?? null;
+                    if (empty($providerTxn) && isset($result['response']['content']['transactions']['transactionId'])) {
+                        $providerTxn = $result['response']['content']['transactions']['transactionId'];
+                    }
+                    if (empty($providerTxn) && isset($result['response']['content']['transactions']['transaction_id'])) {
+                        $providerTxn = $result['response']['content']['transactions']['transaction_id'];
+                    }
+                }
 
                 // Convert status to numeric for database
                 $dbStatus = ($status === 'SUCCESS') ? 1 : 
                            (($status === 'FAILED') ? 2 : 0); // 0 for PENDING
+
+                // Log before database update
+                error_log("=== UPDATING TRANSACTION IN DB ===");
+                error_log("Transaction ID: " . $transactionId);
+                error_log("DB Status: " . $dbStatus . " (0=PENDING, 1=SUCCESS, 2=FAILED)");
+                error_log("Response Data: " . $responseData);
+                error_log("=== END DB UPDATE LOG ===");
 
                 // Update the transaction with the API response
                 $this->db->query(
@@ -467,8 +695,15 @@ class CableService {
                     // Restore user's wallet balance if transaction failed
                     $this->db->query(
                         "UPDATE subscribers SET sWallet = sWallet + ? WHERE sId = ?",
-                        [$amount, 1] // Using 1 as default sId
+                        [$amount, $userId]
                     );
+                    
+                    error_log("=== CABLE SUBSCRIPTION FAILED ===");
+                    error_log("Transaction ID: " . $transactionId);
+                    error_log("Message: " . $message);
+                    error_log("Wallet restored for user: " . $userId);
+                    error_log("=== END CABLE SUBSCRIPTION FAILED ===");
+                    
                     throw new Exception(json_encode([
                         'type' => 'API_ERROR',
                         'message' => $message,
@@ -477,6 +712,14 @@ class CableService {
                         'status' => $status
                     ]));
                 }
+
+                // Log successful completion
+                error_log("=== CABLE SUBSCRIPTION SUCCESS ===");
+                error_log("Transaction ID: " . $transactionId);
+                error_log("Reference: " . $transRef);
+                error_log("Status: " . $status);
+                error_log("Message: " . $message);
+                error_log("=== END CABLE SUBSCRIPTION SUCCESS ===");
 
                 return [
                     'transactionId' => $transactionId,

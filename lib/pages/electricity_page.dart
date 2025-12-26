@@ -161,6 +161,15 @@ class _ElectricityPageState extends State<ElectricityPage> {
       return false;
     }
 
+    // Ensure phone number is provided
+    if (_phoneController.text.trim().isEmpty) {
+      _showErrorModal(
+        'Phone Required',
+        'Please enter a phone number to proceed.',
+      );
+      return false;
+    }
+
     if (_amountController.text.isEmpty) {
       _showErrorModal('Amount Required', 'Please enter an amount to proceed.');
       return false;
@@ -841,8 +850,18 @@ class _ElectricityPageState extends State<ElectricityPage> {
             response['transaction_id']?.toString() ??
             '');
       }
-    
+
       if (!mounted) return;
+
+      // Extract token from response if available
+      String? token;
+      if (response['token'] != null) {
+        token = response['token'].toString();
+      } else if (response['data'] != null &&
+          response['data'] is Map &&
+          response['data']['token'] != null) {
+        token = response['data']['token'].toString();
+      }
 
       // Always open TransactionDetailsPage so user can inspect the outcome
       await Navigator.push(
@@ -858,6 +877,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
             transactionDate: DateTime.now().toString(),
             planValidity: 'N/A',
             playOnOpen: false,
+            token: token,
           ),
         ),
       );
@@ -874,8 +894,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
           _amountError = null;
         });
 
-        if (response['data'] != null &&
-            response['data'] is Map) {
+        if (response['data'] != null && response['data'] is Map) {
           final data = response['data'] as Map;
           if (data.containsKey('amount') &&
               data['amount'] is List &&
@@ -1048,6 +1067,48 @@ class _ElectricityPageState extends State<ElectricityPage> {
                             hint: const Text('Select Biller'),
                           ),
                         ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // Phone input (required)
+                const Text(
+                  'Phone',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _phoneController,
+                  focusNode: _phoneFocusNode,
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'Enter phone number',
+                    hintStyle: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(11),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 Row(

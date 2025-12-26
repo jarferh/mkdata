@@ -33,6 +33,8 @@ class _CablePageState extends State<CablePage> {
   bool _isLoadingProviders = true;
   bool _hasInternet = true;
   StreamSubscription? _connectivitySubscription;
+  bool _isVerifying = false;
+  String? _verifiedName;
 
   late ApiService _apiService;
   List<Map<String, dynamic>> _providers = [];
@@ -808,7 +810,7 @@ class _CablePageState extends State<CablePage> {
           // ignore parse errors
         }
       }
-    
+
       if (!mounted) return;
 
       // Open the transaction details page so user can see success/failure/processing
@@ -1151,6 +1153,57 @@ class _CablePageState extends State<CablePage> {
               ),
 
               const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 44,
+                      child: ElevatedButton(
+                        onPressed: _isVerifying || !_hasInternet
+                            ? null
+                            : () async {
+                                await _verifyIUC();
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFce4323),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: _isVerifying
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text(
+                                'Verify Card',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  if (_verifiedName != null)
+                    Expanded(
+                      child: Text(
+                        _verifiedName ?? '',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
               const Text(
                 'Phone Number',
                 style: TextStyle(
@@ -1258,5 +1311,75 @@ class _CablePageState extends State<CablePage> {
         ),
       ),
     );
+  }
+
+  Future<void> _verifyIUC() async {
+    final card = _cardNumberController.text.trim();
+    if (card.isEmpty) {
+      _showErrorModal('Missing Card Number', 'Please enter smart card number');
+      return;
+    }
+    if (_selectedProviderId == null) {
+      _showErrorModal('No Provider Selected', 'Please select a provider first');
+      return;
+    }
+
+    if (!_hasInternet) {
+      _showErrorModal(
+        'No Internet',
+        'Please connect to the internet and try again.',
+      );
+      return;
+    }
+
+    setState(() {
+      _isVerifying = true;
+      _verifiedName = null;
+    });
+
+    try {
+      final res = await _apiService.validateIUCNumber(
+        iucNumber: card,
+        providerId: _selectedProviderId!,
+      );
+
+      // Try to extract customer name from various possible shapes
+      String? name;
+      if (res['status'] == true ||
+          res['status'] == 'success' ||
+          res['status'] == 'Success') {
+        if (res['message'] != null &&
+            res['message'].toString().toLowerCase().contains('customer name')) {
+          name = res['message'].toString().split(':').length > 1
+              ? res['message'].toString().split(':')[1].trim()
+              : null;
+        }
+        if (name == null && res['details'] != null && res['details'] is Map) {
+          final d = res['details'] as Map;
+          name = d['CustomerName'] ?? d['customer_name'] ?? d['name'];
+        }
+        if (name == null && res['data'] != null && res['data'] is Map) {
+          final d = res['data'] as Map;
+          name = d['CustomerName'] ?? d['customer_name'] ?? d['name'];
+        }
+      } else if (res['status'] == 'success' && res['data'] != null) {
+        final d = res['data'];
+        name = d['name'] ?? d['customer_name'];
+      }
+
+      if (name != null && name.isNotEmpty) {
+        setState(() => _verifiedName = name);
+        _showErrorModal('Verification Successful', 'Customer: $name');
+      } else {
+        _showErrorModal(
+          'Verification Result',
+          'Unable to verify card number',
+        );
+      }
+    } catch (e) {
+      _showErrorModal('Verification Error', e.toString());
+    } finally {
+      if (mounted) setState(() => _isVerifying = false);
+    }
   }
 }

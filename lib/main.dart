@@ -25,6 +25,9 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Set app timezone to GMT+1 (Africa/Lagos)
+  // Note: Dart uses UTC internally; UI formatting handles timezone conversion
+
   // Initialize Firebase
   try {
     await FirebaseService().initialize();

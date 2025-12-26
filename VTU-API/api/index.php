@@ -1,4 +1,7 @@
 <?php
+// Set timezone to GMT+1 (Africa/Lagos)
+date_default_timezone_set('Africa/Lagos');
+
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
@@ -513,6 +516,15 @@ try {
                 }
             }
 
+            // Call provider first; debit wallet only if provider reports success
+            $transactionId = null;
+            $transRef = 'ELEC-' . time();
+            $userId = $data->userId ?? null;
+            $dbTrans = null;
+            $oldBalance = null;
+            $newBalance = null;
+
+            // Call provider
             $service = new ElectricityService();
             $svcResult = $service->purchaseElectricity(
                 $data->meterNumber,
@@ -525,6 +537,71 @@ try {
             $response['status'] = $svcResult['status'] ?? 'error';
             $response['message'] = $svcResult['message'] ?? '';
             $response['data'] = $svcResult['data'] ?? null;
+            
+            // Include token in the response for Flutter to use (cleaned)
+            if (isset($svcResult['data']['token'])) {
+                $rawToken = (string)$svcResult['data']['token'];
+                // Strip common prefixes like 'Token :' and extract first token-like group
+                if (preg_match('/Token\s*[:\-]?\s*(.+)/i', $rawToken, $m)) {
+                    $rawToken = $m[1];
+                }
+                if (preg_match('/([0-9A-Za-z\-]+)/', $rawToken, $m2)) {
+                    $cleanToken = $m2[1];
+                } else {
+                    $cleanToken = trim($rawToken);
+                }
+                $response['token'] = $cleanToken;
+            }
+
+            // If a userId was provided, persist transaction and only debit on provider success
+            if (!empty($userId)) {
+                try {
+                    $dbTrans = new Database();
+                    $conn = $dbTrans->getConnection();
+                    $conn->beginTransaction();
+
+                    // Fetch current balance
+                    $balanceRow = $dbTrans->query("SELECT sWallet FROM subscribers WHERE sId = ? LIMIT 1", [$userId]);
+                    $oldBalance = (float)($balanceRow[0]['sWallet'] ?? 0);
+                    $amount = (float)$data->amount;
+
+                    $serviceDesc = "Electricity purchase: Meter {$data->meterNumber}";
+                    $apiResponseLog = json_encode($svcResult['data'] ?? $svcResult);
+
+                    if (($svcResult['status'] ?? '') === 'success') {
+                        // Ensure user still has sufficient funds before debiting
+                        if ($oldBalance < $amount) {
+                            // Insert failed transaction due to insufficient balance at commit time
+                            $dbTrans->query("INSERT INTO transactions (sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response, date) VALUES (?, ?, 'ELECTRICITY', ?, ?, 1, ?, ?, ?, NOW())", [$userId, $transRef, $serviceDesc, $amount, $oldBalance, $oldBalance, $apiResponseLog]);
+                            $transactionId = $dbTrans->lastInsertId();
+                            $transRef = $transRef . '-' . $transactionId;
+                            $dbTrans->query("UPDATE transactions SET transref = ? WHERE tId = ?", [$transRef, $transactionId]);
+                            $conn->commit();
+                        } else {
+                            // Debit wallet and record success transaction
+                            $newBalance = $oldBalance - $amount;
+                            $dbTrans->query("UPDATE subscribers SET sWallet = sWallet - ? WHERE sId = ?", [$amount, $userId]);
+                            $dbTrans->query("INSERT INTO transactions (sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response, date) VALUES (?, ?, 'ELECTRICITY', ?, ?, 0, ?, ?, ?, NOW())", [$userId, $transRef, $serviceDesc, $amount, $oldBalance, $newBalance, $apiResponseLog]);
+                            $transactionId = $dbTrans->lastInsertId();
+                            $transRef = $transRef . '-' . $transactionId;
+                            $dbTrans->query("UPDATE transactions SET transref = ? WHERE tId = ?", [$transRef, $transactionId]);
+                            $conn->commit();
+                        }
+                    } else {
+                        // Provider returned error — record failed transaction, do not debit
+                        $dbTrans->query("INSERT INTO transactions (sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response, date) VALUES (?, ?, 'ELECTRICITY', ?, ?, 1, ?, ?, ?, NOW())", [$userId, $transRef, $serviceDesc, $amount, $oldBalance, $oldBalance, $apiResponseLog]);
+                        $transactionId = $dbTrans->lastInsertId();
+                        $transRef = $transRef . '-' . $transactionId;
+                        $dbTrans->query("UPDATE transactions SET transref = ? WHERE tId = ?", [$transRef, $transactionId]);
+                        $conn->commit();
+                    }
+                } catch (Exception $e) {
+                    if (isset($conn) && $conn->inTransaction()) {
+                        $conn->rollBack();
+                    }
+                    error_log('Error updating/creating transaction after provider call: ' . $e->getMessage());
+                }
+            }
 
             // Send push notification for all attempts (success and failure)
             try {
@@ -569,14 +646,49 @@ try {
             }
 
             $data = json_decode(file_get_contents("php://input"));
-            if (!isset($data->iucNumber) || !isset($data->providerId)) {
-                throw new Exception('Missing required parameters');
+
+            // Require both iucNumber and providerId and ensure they are not empty strings
+            $iuc = isset($data->iucNumber) ? trim((string)$data->iucNumber) : '';
+            $prov = isset($data->providerId) ? trim((string)$data->providerId) : '';
+            if ($iuc === '' || $prov === '') {
+                http_response_code(400);
+                $response['status'] = 'error';
+                $response['message'] = 'Missing required parameters: iucNumber and providerId are required.';
+                $response['data'] = null;
+                break;
             }
 
             $service = new CableService();
-            $response['data'] = $service->validateIUCNumber($data->iucNumber, $data->providerId);
-            $response['status'] = 'success';
-            $response['message'] = 'IUC number validated successfully';
+            $svcResult = $service->validateIUCNumber($iuc, $prov);
+
+            if (is_array($svcResult) && isset($svcResult['status']) && $svcResult['status'] === true) {
+                $response['status'] = 'success';
+                $response['message'] = isset($svcResult['message']) ? $svcResult['message'] : 'IUC number validated successfully';
+
+                // Sanitize provider details: only expose minimal fields (customer name)
+                $custName = null;
+                $details = $svcResult['details'] ?? null;
+                if (is_array($details)) {
+                    // Check common locations for customer name
+                    if (isset($details['response']['content']['CustomerName'])) $custName = $details['response']['content']['CustomerName'];
+                    elseif (isset($details['response']['content']['customer_name'])) $custName = $details['response']['content']['customer_name'];
+                    elseif (isset($details['CustomerName'])) $custName = $details['CustomerName'];
+                    elseif (isset($details['customer_name'])) $custName = $details['customer_name'];
+                    elseif (isset($details['data']['Customer_Name'])) $custName = $details['data']['Customer_Name'];
+                    elseif (isset($details['data']['customer_name'])) $custName = $details['data']['customer_name'];
+                    elseif (isset($details['name'])) $custName = $details['name'];
+                }
+
+                $response['data'] = [
+                    'customer_name' => $custName,
+                ];
+            } else {
+                http_response_code(400);
+                $response['status'] = 'error';
+                $response['message'] = is_array($svcResult) && isset($svcResult['message']) ? $svcResult['message'] : 'IUC verification failed';
+                $response['data'] = null;
+            }
+
             break;
 
         case 'cable-subscription':
@@ -629,7 +741,8 @@ try {
                 $data->iucNumber,
                 $data->phoneNumber,
                 $data->amount,
-                $data->pin
+                $data->pin,
+                $data->userId
             );
 
             // Normalize and propagate the service response
@@ -1585,6 +1698,7 @@ try {
             $transactions = $db->query($query, [$userId]);
 
             // Map oldbal/newbal to string values to send to client (keep null if not present)
+            // Also extract token from api_response for display
             foreach ($transactions as &$tx) {
                 if (isset($tx['oldbal']) && $tx['oldbal'] !== null) {
                     $tx['oldbal'] = (string)$tx['oldbal'];
@@ -1600,6 +1714,59 @@ try {
                 if (!isset($tx['transref'])) $tx['transref'] = '';
                 if (!isset($tx['servicename'])) $tx['servicename'] = '';
                 if (!isset($tx['servicedesc'])) $tx['servicedesc'] = '';
+                
+                // Extract token from api_response or api_response_log if available (search recursively)
+                $tx['token'] = '';
+                $candidates = [];
+                if (!empty($tx['api_response'])) $candidates[] = $tx['api_response'];
+                if (!empty($tx['api_response_log'])) $candidates[] = $tx['api_response_log'];
+
+                $findToken = function ($node) use (&$findToken) {
+                    if (is_array($node)) {
+                        // direct keys
+                        foreach (['token','Token','purchased_code','purchasedCode','purchasedCode','receipt'] as $k) {
+                            if (isset($node[$k]) && !empty($node[$k])) return (string)$node[$k];
+                        }
+                        // recurse
+                        foreach ($node as $v) {
+                            $res = $findToken($v);
+                            if ($res) return $res;
+                        }
+                        return null;
+                    } elseif (is_string($node)) {
+                        // look for patterns like 'Token : 12345' or 'Token:12345'
+                        if (preg_match('/Token\s*[:\-]\s*([0-9A-Za-z\-\s]+)/i', $node, $m)) {
+                            return trim($m[1]);
+                        }
+                        if (preg_match('/\btoken\b\s*[:\-]\s*([0-9A-Za-z\-\s]+)/i', $node, $m)) {
+                            return trim($m[1]);
+                        }
+                        return null;
+                    }
+                    return null;
+                };
+
+                foreach ($candidates as $raw) {
+                    try {
+                        $apiResp = json_decode($raw, true);
+                    } catch (Exception $e) {
+                        $apiResp = null;
+                    }
+                    if ($apiResp === null) continue;
+                    $tok = $findToken($apiResp);
+                    if ($tok) {
+                        // Clean token: remove 'Token :' prefix and extract first alphanumeric/hyphen group
+                        $clean = trim((string)$tok);
+                        if (preg_match('/Token\s*[:\-]?\s*(.+)/i', $clean, $mclean)) {
+                            $clean = $mclean[1];
+                        }
+                        if (preg_match('/([0-9A-Za-z\-]+)/', $clean, $m2)) {
+                            $clean = $m2[1];
+                        }
+                        $tx['token'] = $clean;
+                        break;
+                    }
+                }
             }
 
             $response['data'] = $transactions;

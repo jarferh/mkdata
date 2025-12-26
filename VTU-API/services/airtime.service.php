@@ -243,6 +243,8 @@ class AirtimeService {
             // Get API Status based on ALRAHUZDATA response format
             $transactionStatus = 0;
             $responseMessage = "Transaction Failed, Please Try Again Later";
+            // default profit
+            $profit = 0.0;
 
         if ($httpCode === 200 || $httpCode === 201) {
                 if (isset($result['Status']) && strtolower($result['Status']) === 'successful' OR isset($result['Status']) && strtolower($result['Status']) === 'success' ) {
@@ -250,8 +252,18 @@ class AirtimeService {
                     $responseMessage = "Airtime purchase successful";
                     
                     // Deduct from wallet on success
-            $updateQuery = "UPDATE subscribers SET sWallet = sWallet - ? WHERE sId = ?";
-            $this->db->query($updateQuery, [$chargeAmount, $userId]);
+                    $updateQuery = "UPDATE subscribers SET sWallet = sWallet - ? WHERE sId = ?";
+                    $this->db->query($updateQuery, [$chargeAmount, $userId]);
+                    // compute provider buy price using aBuyDiscount from airtime table (percentage)
+                    $buyDiscount = isset($airConf['aBuyDiscount']) ? floatval($airConf['aBuyDiscount']) : null;
+                    if ($buyDiscount !== null) {
+                        $providerBuyPrice = round(floatval($faceAmount) * ($buyDiscount / 100.0), 2);
+                    } else {
+                        // fallback: assume provider buy price equals face amount
+                        $providerBuyPrice = floatval($faceAmount);
+                    }
+                    // profit = what we charged the user minus what the provider charged us
+                    $profit = round(floatval($chargeAmount) - $providerBuyPrice, 2);
                 } elseif (isset($result['Status']) && strtolower($result['Status']) === 'pending') {
                     $transactionStatus = 2;
                     $responseMessage = "Transaction is processing";
@@ -267,8 +279,8 @@ class AirtimeService {
                 error_log("Airtime fail log: " . json_encode($result));
             }
             
-            // Calculate profit (if any)
-            $profit = 0; // Set profit calculation logic here if needed
+            // profit already computed above for success; ensure it's a float
+            $profit = isset($profit) ? floatval($profit) : 0.0;
             
             // Insert transaction record - ensure all values are properly formatted
             $this->db->query($insertQuery, [
@@ -290,9 +302,11 @@ class AirtimeService {
             // After creating the record and determining transaction status, ensure newbal reflects actual result
             $finalNewBal = ($transactionStatus === 0) ? ($wallet - $chargeAmount) : $wallet;
             try {
-                $this->db->query("UPDATE transactions SET status = ?, newbal = ? WHERE tId = ?", [(int)$transactionStatus, (string)$finalNewBal, $transactionId]);
+                // Ensure profit is set (0 on failures)
+                $updateProfit = isset($profit) ? $profit : 0.0;
+                $this->db->query("UPDATE transactions SET status = ?, newbal = ?, profit = ? WHERE tId = ?", [(int)$transactionStatus, (string)$finalNewBal, $updateProfit, $transactionId]);
             } catch (Exception $e) {
-                error_log("Failed to update transaction newbal/status: " . $e->getMessage());
+                error_log("Failed to update transaction newbal/status/profit: " . $e->getMessage());
             }
 
             // Generate MK transaction ID

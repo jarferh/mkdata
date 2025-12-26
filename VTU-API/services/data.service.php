@@ -220,9 +220,10 @@ public function purchaseData($networkId, $phoneNumber, $planCode, $userId) {
         }
 
         // Get plan details using API planCode with the correct price column
-        $planQuery = "SELECT pId, name, " . $priceCol . " as price, type as planType, datanetwork, day, planid as planCode 
-                      FROM dataplans 
-                      WHERE planid = ?";
+        // Also fetch the stored buy price (dp.price) so we can compute profit = sell_price - price
+        $planQuery = "SELECT pId, name, dp.price as buy_price, " . $priceCol . " as price, type as planType, datanetwork, day, planid as planCode 
+              FROM dataplans dp 
+              WHERE planid = ?";
         error_log("\nQuerying Database:");
         error_log("SQL Query: " . $planQuery);
         error_log("Parameters: " . json_encode([strval($planCode)]));
@@ -430,7 +431,18 @@ public function purchaseData($networkId, $phoneNumber, $planCode, $userId) {
 
     // Final transaction status update - ensure newbal reflects actual deduction only on success
     $finalNewBal = ($status === 0) ? ($currentBalance - $planPrice) : $currentBalance;
-    $this->db->query("UPDATE transactions SET status = ?, api_response = ?, newbal = ? WHERE tId = ?", [$status, $response, (string)$finalNewBal, $transactionId]);
+    // Compute profit for successful transactions when buy_price/price is available
+    $profit = 0.0;
+    // prefer explicit buy_price (if dataplans has it), otherwise fallback to plan price
+    $buyPrice = isset($plan['buy_price']) ? floatval($plan['buy_price']) : (isset($plan['price']) ? floatval($plan['price']) : 0.0);
+    $sellPrice = isset($plan['price']) ? floatval($plan['price']) : 0.0;
+    if ($status === 0) {
+        $profit = round($sellPrice - $buyPrice, 2);
+    }
+    // Log profit calculation and DB update details
+    error_log("Data Profit Calc - buyPrice=" . $buyPrice . ", sellPrice=" . $sellPrice . ", profit=" . $profit);
+    error_log("Data Transaction Update - tId=" . $transactionId . ", status=" . $status . ", newbal=" . $finalNewBal . ", profit=" . $profit);
+    $this->db->query("UPDATE transactions SET status = ?, api_response = ?, newbal = ?, profit = ? WHERE tId = ?", [$status, $response, (string)$finalNewBal, $profit, $transactionId]);
         $this->db->commit();
 
         return [

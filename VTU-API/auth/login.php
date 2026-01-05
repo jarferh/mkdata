@@ -1,9 +1,32 @@
 <?php
-header("Access-Control-Allow-Origin: *");
+// Allow credentials with specific origins or same-origin requests
+$allowedOrigins = [
+    'http://localhost',
+    'https://localhost',
+    'https://api.mkdata.com.ng',
+    'https://mkdata.com.ng',
+];
+
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, $allowedOrigins) || php_sapi_name() === 'cli') {
+    header("Access-Control-Allow-Origin: $origin");
+    header("Access-Control-Allow-Credentials: true");
+} else {
+    // For all other origins, still allow but without credentials
+    header("Access-Control-Allow-Origin: *");
+}
+
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: POST");
 header("Access-Control-Max-Age: 3600");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+
+// Load environment variables from .env file
+require_once '../auth/session-helper.php';
+loadEnvFile(__DIR__ . '/../.env');
+
+// Initialize session to enable session-based authentication
+initializeSession();
 
 include_once '../config/database.php';
 include_once '../models/user.php';
@@ -30,6 +53,17 @@ if(!empty($data->email) && !empty($data->password)){
         }
         
         if($user->validatePassword($data->password)){
+            // Save user ID to session (THIS is the authenticated user)
+            setAuthenticatedUser($user->sId, $user->sEmail, 'user');
+            // Force session write/close to ensure session data is persisted immediately
+            if (function_exists('session_write_close')) {
+                session_write_close();
+            }
+            // Log session diagnostics to error log for debugging (temporary)
+            error_log('Login: session_id=' . session_id());
+            error_log('Login: session_save_path=' . ini_get('session.save_path'));
+            error_log('Login: session_content=' . json_encode(isset($_SESSION) ? $_SESSION : []));
+            
             http_response_code(200);
             echo json_encode(array(
                 "message" => "Login successful.",
@@ -57,7 +91,7 @@ if(!empty($data->email) && !empty($data->password)){
             
             // Send login notification
             try {
-                require_once __DIR__ . '/../mkdata/api/send-transaction-notification.php';
+                require_once __DIR__ . '/../api/send-transaction-notification.php';
                 sendTransactionNotification($user->sId, 'login', [
                     'time' => date('H:i')
                 ]);

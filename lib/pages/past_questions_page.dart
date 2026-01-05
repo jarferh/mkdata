@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import '../services/api_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
@@ -100,37 +100,31 @@ class _PastQuestionsPageState extends State<PastQuestionsPage> {
     });
 
     try {
-      final uri = Uri.parse('https://api.mkdata.com.ng/api/past-questions');
-      final response = await http.get(uri);
+      final api = ApiService();
+      final data = await api.get('past-questions');
+      if (data['status'] == 'success' && data['data'] != null) {
+        final questions = (data['data'] as List)
+            .map((q) => PastQuestion.fromJson(q))
+            .toList();
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 'success' && data['data'] != null) {
-          final questions = (data['data'] as List)
-              .map((q) => PastQuestion.fromJson(q))
-              .toList();
+        // Extract unique exams, subjects, and years
+        final exams = <String>{};
+        final subjects = <String>{};
+        final years = <String>{};
 
-          // Extract unique exams, subjects, and years
-          final exams = <String>{};
-          final subjects = <String>{};
-          final years = <String>{};
-
-          for (var q in questions) {
-            exams.add(q.exam);
-            subjects.add(q.subject);
-            years.add(q.year.toString());
-          }
-
-          setState(() {
-            _pastQuestions = questions;
-            _exams = exams.toList()..sort();
-            _subjects = subjects.toList()..sort();
-            _years = years.toList()
-              ..sort((a, b) => int.parse(b).compareTo(int.parse(a)));
-          });
+        for (var q in questions) {
+          exams.add(q.exam);
+          subjects.add(q.subject);
+          years.add(q.year.toString());
         }
-      } else {
-        throw Exception('Failed to load past questions');
+
+        setState(() {
+          _pastQuestions = questions;
+          _exams = exams.toList()..sort();
+          _subjects = subjects.toList()..sort();
+          _years = years.toList()
+            ..sort((a, b) => int.parse(b).compareTo(int.parse(a)));
+        });
       }
     } catch (e) {
       if (mounted) {

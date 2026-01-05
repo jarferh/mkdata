@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
+import '../services/api_service.dart';
 import 'dart:convert';
 import '../utils/network_utils.dart';
 import '../services/api_service.dart';
@@ -109,57 +109,42 @@ class _TransactionsPageState extends State<TransactionsPage> {
         setState(() => _isLoading = true);
       }
 
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
+      final api = ApiService();
+      final userId = await api.getUserId();
+      if (userId == null) throw Exception('User not logged in');
 
-      if (userId == null) {
-        throw Exception('User not logged in');
-      }
-
-      final response = await http.get(
-        Uri.parse(
-          '${ApiService.baseUrl}/api/transactions?user_id=$userId&limit=$_perPage&offset=0',
-        ),
+      final responseData = await api.get(
+        'transactions?user_id=$userId&limit=$_perPage&offset=0',
       );
+      if (responseData['status'] == 'success') {
+        final List data = List<Map<String, dynamic>>.from(responseData['data']);
+        final fetched = data.map((json) => Transaction.fromJson(json)).toList();
 
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['status'] == 'success') {
-          final List data = List<Map<String, dynamic>>.from(
-            responseData['data'],
-          );
-          final fetched = data
-              .map((json) => Transaction.fromJson(json))
-              .toList();
-
-          // If the server returned more than _perPage items on the initial
-          // request it likely ignored pagination and returned the full list.
-          if (fetched.length > _perPage) {
-            setState(() {
-              _transactions = fetched.take(_perPage).toList();
-              _bufferedRemaining = fetched.skip(_perPage).toList();
-              _hasMore = _bufferedRemaining.isNotEmpty;
-              _serverReturnedFull = true;
-            });
-          } else if (fetched.length == _perPage) {
-            // Could be paginated; assume there may be more on the server.
-            setState(() {
-              _transactions = fetched;
-              _hasMore = true;
-              _serverReturnedFull = false;
-            });
-          } else {
-            setState(() {
-              _transactions = fetched;
-              _hasMore = false;
-              _serverReturnedFull = false;
-            });
-          }
+        // If the server returned more than _perPage items on the initial
+        // request it likely ignored pagination and returned the full list.
+        if (fetched.length > _perPage) {
+          setState(() {
+            _transactions = fetched.take(_perPage).toList();
+            _bufferedRemaining = fetched.skip(_perPage).toList();
+            _hasMore = _bufferedRemaining.isNotEmpty;
+            _serverReturnedFull = true;
+          });
+        } else if (fetched.length == _perPage) {
+          // Could be paginated; assume there may be more on the server.
+          setState(() {
+            _transactions = fetched;
+            _hasMore = true;
+            _serverReturnedFull = false;
+          });
         } else {
-          throw Exception(responseData['message']);
+          setState(() {
+            _transactions = fetched;
+            _hasMore = false;
+            _serverReturnedFull = false;
+          });
         }
       } else {
-        throw Exception('Failed to load transactions');
+        throw Exception(responseData['message']);
       }
     } catch (e) {
       if (mounted) showNetworkErrorSnackBar(context, e);
@@ -188,37 +173,28 @@ class _TransactionsPageState extends State<TransactionsPage> {
           _hasMore = _bufferedRemaining.isNotEmpty;
         });
       } else {
-        final prefs = await SharedPreferences.getInstance();
-        final userId = prefs.getString('user_id');
-
+        final api = ApiService();
+        final userId = await api.getUserId();
         if (userId == null) throw Exception('User not logged in');
 
         final offset = _transactions.length;
-        final response = await http.get(
-          Uri.parse(
-            '${ApiService.baseUrl}/api/transactions?user_id=$userId&limit=$_perPage&offset=$offset',
-          ),
+        final responseData = await api.get(
+          'transactions?user_id=$userId&limit=$_perPage&offset=$offset',
         );
-
-        if (response.statusCode == 200) {
-          final responseData = json.decode(response.body);
-          if (responseData['status'] == 'success') {
-            final List data = List<Map<String, dynamic>>.from(
-              responseData['data'],
-            );
-            final fetched = data
-                .map((json) => Transaction.fromJson(json))
-                .toList();
-            setState(() {
-              _transactions.addAll(fetched);
-              // If we received fewer than requested, there's no more on server.
-              _hasMore = fetched.length >= _perPage;
-            });
-          } else {
-            throw Exception(responseData['message']);
-          }
+        if (responseData['status'] == 'success') {
+          final List data = List<Map<String, dynamic>>.from(
+            responseData['data'],
+          );
+          final fetched = data
+              .map((json) => Transaction.fromJson(json))
+              .toList();
+          setState(() {
+            _transactions.addAll(fetched);
+            // If we received fewer than requested, there's no more on server.
+            _hasMore = fetched.length >= _perPage;
+          });
         } else {
-          throw Exception('Failed to load transactions');
+          throw Exception(responseData['message']);
         }
       }
     } catch (e) {

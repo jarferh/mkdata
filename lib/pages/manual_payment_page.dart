@@ -92,10 +92,8 @@ class _ManualPaymentPageState extends State<ManualPaymentPage> {
     setState(() => _sending = true);
     try {
       final api = ApiService();
-      // include subscriber id (sId) from shared preferences
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id') ?? '';
-
+      // include subscriber id (sId) from session
+      final userId = await ApiService().getUserId() ?? '';
       final body = {
         'amount': amount,
         'bank': sendBank,

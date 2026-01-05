@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
@@ -12,22 +11,17 @@ Future<void> _sendAccountGenerationNotification(
   String accountType,
 ) async {
   try {
-    final response = await http
-        .post(
-          Uri.parse('https://api.mkdata.com.ng/api/send-notification'),
-          headers: {'Content-Type': 'application/json'},
-          body: json.encode({
-            'user_id': userId,
-            'type': 'account_generated',
-            'title': '💰 Virtual Account Generated',
-            'account_type': accountType,
-          }),
-        )
-        .timeout(const Duration(seconds: 10));
+    final api = ApiService();
+    final resp = await api.post('send-notification', {
+      'user_id': userId,
+      'type': 'account_generated',
+      'title': '💰 Virtual Account Generated',
+      'account_type': accountType,
+    });
 
-    if (response.statusCode != 200) {
+    if (resp['status'] != 'success') {
       print(
-        'Error sending account generation notification: ${response.statusCode}',
+        'Error sending account generation notification: ${resp['message'] ?? resp}',
       );
     }
   } catch (e) {
@@ -127,43 +121,22 @@ class _WalletPageState extends State<WalletPage>
         // Fetch data from API if not found in SharedPreferences
         print('Fetching user data from API...');
         try {
-          final userId = prefs.getString('user_id');
+          final userId = await ApiService().getUserId();
           if (userId == null) {
             throw Exception('User ID not found');
           }
 
-          final response = await http.get(
-            Uri.parse('${ApiService.baseUrl}/api/account-details?id=$userId'),
-          );
+          final api = ApiService();
+          final resp = await api.get('account-details?id=$userId');
+          print('API Response: $resp');
 
-          print('API Response Status Code: ${response.statusCode}');
-          print('API Response Body: ${response.body}');
-
-          if (response.statusCode == 200) {
-            final responseData = json.decode(response.body);
-            print('Decoded API Response: ${json.encode(responseData)}');
-
-            if (responseData['status'] == 'success') {
-              formattedData = responseData['data'];
-              print('Account Details Data: ${json.encode(formattedData)}');
-
-              // Save the fetched data to SharedPreferences
-              await prefs.setString('user_data', json.encode(formattedData));
-              print('Data saved to SharedPreferences');
-            } else {
-              final msg =
-                  responseData['message'] ?? 'Failed to fetch account details';
-              throw Exception(msg);
-            }
+          if (resp['status'] == 'success') {
+            formattedData = resp['data'];
+            // Save the fetched data to SharedPreferences
+            await prefs.setString('user_data', json.encode(formattedData));
+            print('Data saved to SharedPreferences');
           } else {
-            // Try to extract server-provided message
-            String msg = 'Failed to fetch account details';
-            try {
-              final responseData = json.decode(response.body);
-              if (responseData is Map && responseData['message'] != null) {
-                msg = responseData['message'].toString();
-              }
-            } catch (_) {}
+            final msg = resp['message'] ?? 'Failed to fetch account details';
             throw Exception(msg);
           }
         } catch (e) {
@@ -194,8 +167,7 @@ class _WalletPageState extends State<WalletPage>
         _isGenerating = true;
       });
 
-      final prefs = await SharedPreferences.getInstance();
-      String? userId = prefs.getString('user_id');
+      String? userId = await ApiService().getUserId();
       if (userId == null && userData != null && userData!['sId'] != null) {
         userId = userData!['sId'].toString();
       }
@@ -208,76 +180,60 @@ class _WalletPageState extends State<WalletPage>
         endpoint = 'generate-palmpay-only';
       }
 
-      final uri = Uri.parse('${ApiService.baseUrl}/api/$endpoint');
-      final response = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'user_id': userId}),
-      );
+      final api = ApiService();
+      final data = await api.post(endpoint, {'user_id': userId});
+      if (data['status'] == 'success') {
+        final pagaAcct = data['data']?['paga_account'] ?? '';
+        final palmpayAcct = data['data']?['palmpay_account'] ?? '';
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 'success') {
-          final pagaAcct = data['data']?['paga_account'] ?? '';
-          final palmpayAcct = data['data']?['palmpay_account'] ?? '';
-
-          // Merge into existing userData and persist
-          final updated = Map<String, dynamic>.from(userData ?? {});
-          if (pagaAcct != null && pagaAcct.toString().isNotEmpty) {
-            // Save Paga account in sAsfiyBank
-            updated['sAsfiyBank'] = pagaAcct.toString();
-          }
-          if (palmpayAcct != null && palmpayAcct.toString().isNotEmpty) {
-            // Save Palmpay account in sPaga
-            updated['sPaga'] = palmpayAcct.toString();
-          }
-          // Mark that accounts were generated in the app
-          updated['sBankName'] = 'app';
-
-          await prefs.setString('user_data', json.encode(updated));
-
-          setState(() {
-            userData = updated;
-          });
-
-          String successMsg = 'Account generated successfully';
-          if (type == 'both') {
-            successMsg = 'Both accounts generated successfully';
-          } else if (type == 'paga') {
-            successMsg = 'Paga account generated successfully';
-          } else if (type == 'palmpay') {
-            successMsg = 'Palmpay account generated successfully';
-          }
-
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(successMsg)));
-
-          // Send notification asynchronously (don't wait for it)
-          String notificationAccountType = '';
-          if (type == 'both') {
-            notificationAccountType = 'Palmpay and Paga';
-          } else if (type == 'paga') {
-            notificationAccountType = 'Paga';
-          } else if (type == 'palmpay') {
-            notificationAccountType = 'Palmpay';
-          }
-          _sendAccountGenerationNotification(
-            userId ?? '',
-            notificationAccountType,
-          );
-        } else {
-          final msg = data['message'] ?? 'Failed to generate account';
-          throw Exception(msg);
+        // Merge into existing userData and persist
+        final updated = Map<String, dynamic>.from(userData ?? {});
+        if (pagaAcct != null && pagaAcct.toString().isNotEmpty) {
+          // Save Paga account in sAsfiyBank
+          updated['sAsfiyBank'] = pagaAcct.toString();
         }
+        if (palmpayAcct != null && palmpayAcct.toString().isNotEmpty) {
+          // Save Palmpay account in sPaga
+          updated['sPaga'] = palmpayAcct.toString();
+        }
+        // Mark that accounts were generated in the app
+        updated['sBankName'] = 'app';
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('user_data', json.encode(updated));
+
+        setState(() {
+          userData = updated;
+        });
+
+        String successMsg = 'Account generated successfully';
+        if (type == 'both') {
+          successMsg = 'Both accounts generated successfully';
+        } else if (type == 'paga') {
+          successMsg = 'Paga account generated successfully';
+        } else if (type == 'palmpay') {
+          successMsg = 'Palmpay account generated successfully';
+        }
+
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(successMsg)));
+
+        // Send notification asynchronously (don't wait for it)
+        String notificationAccountType = '';
+        if (type == 'both') {
+          notificationAccountType = 'Palmpay and Paga';
+        } else if (type == 'paga') {
+          notificationAccountType = 'Paga';
+        } else if (type == 'palmpay') {
+          notificationAccountType = 'Palmpay';
+        }
+        _sendAccountGenerationNotification(
+          userId ?? '',
+          notificationAccountType,
+        );
       } else {
-        String msg = 'Server error: ${response.statusCode}';
-        try {
-          final body = json.decode(response.body);
-          if (body is Map && body['message'] != null) {
-            msg = body['message'].toString();
-          }
-        } catch (_) {}
+        final msg = data['message'] ?? 'Failed to generate account';
         throw Exception(msg);
       }
     } catch (e) {

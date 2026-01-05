@@ -301,20 +301,8 @@ class _DataPageState extends State<DataPage> {
 
       print('Fetching data plans for network $networkName and type $type');
 
-      // Get actual user id from stored user_data in SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      String? userId;
-      final rawUser = prefs.getString('user_data');
-      if (rawUser != null) {
-        try {
-          final userJson = json.decode(rawUser);
-          userId = (userJson['sId'] ?? userJson['id'])?.toString();
-        } catch (_) {
-          userId = prefs.getString('user_id');
-        }
-      } else {
-        userId = prefs.getString('user_id');
-      }
+      // Determine user id from server-backed session (preferred)
+      final userId = await ApiService().getUserId();
 
       // Build request URL and include userId if available
       final queryParameters = {
@@ -323,25 +311,28 @@ class _DataPageState extends State<DataPage> {
         if (userId != null) 'userId': userId,
       };
 
-      final uri = Uri.parse(
-        'https://api.mkdata.com.ng/api/data-plans',
-      ).replace(queryParameters: queryParameters);
+      // Use ApiService to ensure session cookie and headers are applied
+      final api = ApiService();
+      final qp = queryParameters.entries
+          .map(
+            (e) =>
+                '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value.toString())}',
+          )
+          .join('&');
+      final endpoint = 'data-plans${qp.isNotEmpty ? '?$qp' : ''}';
 
-      final response = await http.get(uri);
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 'success' && data['data'] != null) {
-          final plans = (data['data'] as List)
-              .map((plan) => DataPlan.fromJson(plan))
-              .toList();
-
+      final res = await api.get(endpoint);
+      if (res['status'] == 'success' && res['data'] != null) {
+        final plans = (res['data'] as List)
+            .map((plan) => DataPlan.fromJson(plan))
+            .toList();
+        if (mounted) {
           setState(() {
             _dataPlans = plans;
           });
         }
       } else {
-        throw Exception('Failed to load data plans');
+        throw Exception(res['message'] ?? 'Failed to load data plans');
       }
     } catch (e) {
       if (mounted) {
@@ -803,20 +794,8 @@ class _DataPageState extends State<DataPage> {
     });
 
     try {
-      // Get actual user ID from stored user_data in SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      String? userId;
-      final rawUser = prefs.getString('user_data');
-      if (rawUser != null) {
-        try {
-          final userJson = json.decode(rawUser);
-          userId = (userJson['sId'] ?? userJson['id'])?.toString();
-        } catch (_) {
-          userId = prefs.getString('user_id');
-        }
-      } else {
-        userId = prefs.getString('user_id');
-      }
+      // Determine user id from server-backed session (preferred)
+      final userId = await ApiService().getUserId();
 
       if (userId == null) {
         throw Exception('User not authenticated');
@@ -826,7 +805,7 @@ class _DataPageState extends State<DataPage> {
       final networkName = _selectedNetwork;
 
       // Get stored PIN from SharedPreferences
-      // prefs was already obtained above when resolving userId; reuse it
+      final prefs = await SharedPreferences.getInstance();
       if (!_isBiometricEnabled) {
         final storedPin = prefs.getString('login_pin');
         if (storedPin == null || storedPin != _pinController.text) {

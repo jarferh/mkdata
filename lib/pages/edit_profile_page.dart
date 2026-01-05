@@ -3,7 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:io';
-import 'package:http/http.dart' as http;
+import '../services/api_service.dart';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
@@ -121,8 +121,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
     try {
       setState(() => _isSubmitting = true);
 
+      String? userId = await ApiService().getUserId();
       final prefs = await SharedPreferences.getInstance();
-      String? userId = prefs.getString('user_id');
 
       // Check if only image is being updated
       bool isFirstNameChanged =
@@ -172,56 +172,35 @@ class _EditProfilePageState extends State<EditProfilePage> {
         updateData['new_password'] = _newPasswordController.text;
       }
 
-      // Send update request to API
-      final response = await http.post(
-        Uri.parse('https://api.mkdata.com.ng/api/update-profile'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode(updateData),
-      );
+      // Send update request to API via ApiService (uses session cookie)
+      final api = ApiService();
+      final res = await api.post('update-profile', updateData);
+      if (res['status'] == 'success') {
+        final updated = Map<String, dynamic>.from(_userData ?? {});
+        updated['sFname'] = _firstNameController.text.trim();
+        updated['sLname'] = _lastNameController.text.trim();
 
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
+        await prefs.setString('user_data', json.encode(updated));
 
-        if (responseData['status'] == 'success') {
-          // Update cached user data
-          final updated = Map<String, dynamic>.from(_userData ?? {});
-          updated['sFname'] = _firstNameController.text.trim();
-          updated['sLname'] = _lastNameController.text.trim();
+        if (_selectedImagePath != null) {
+          await prefs.setString('profile_photo_path', _selectedImagePath!);
+        }
 
-          await prefs.setString('user_data', json.encode(updated));
-
-          // Update profile photo if selected
-          if (_selectedImagePath != null) {
-            await prefs.setString('profile_photo_path', _selectedImagePath!);
-          }
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Profile updated successfully'),
-                duration: Duration(seconds: 2),
-              ),
-            );
-
-            // Navigate back after short delay
-            await Future.delayed(const Duration(milliseconds: 500));
-            Navigator.of(context).pop(true);
-          }
-        } else {
-          _showErrorDialog(
-            responseData['message'] ??
-                'Failed to update profile. Please try again.',
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Profile updated successfully'),
+              duration: Duration(seconds: 2),
+            ),
           );
+
+          await Future.delayed(const Duration(milliseconds: 500));
+          Navigator.of(context).pop(true);
         }
       } else {
-        String errorMsg = 'Server error: ${response.statusCode}';
-        try {
-          final body = json.decode(response.body);
-          if (body is Map && body['message'] != null) {
-            errorMsg = body['message'].toString();
-          }
-        } catch (_) {}
-        _showErrorDialog(errorMsg);
+        _showErrorDialog(
+          res['message'] ?? 'Failed to update profile. Please try again.',
+        );
       }
     } catch (e) {
       _showErrorDialog('Error updating profile: ${e.toString()}');

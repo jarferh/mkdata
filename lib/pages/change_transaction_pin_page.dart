@@ -36,8 +36,7 @@ class _ChangeTransactionPinPageState extends State<ChangeTransactionPinPage> {
     }
     setState(() => _isLoading = true);
     try {
-      final prefs = await SharedPreferences.getInstance();
-      String? userId = prefs.getString('user_id');
+      String? userId = await ApiService().getUserId();
 
       final api = ApiService();
       final res = await api.post('update-pin', {
@@ -46,6 +45,7 @@ class _ChangeTransactionPinPageState extends State<ChangeTransactionPinPage> {
       });
 
       if (res['status'] == 'success') {
+        final prefs = await SharedPreferences.getInstance();
         await prefs.setString('login_pin', _enteredPin);
         if (mounted) Navigator.of(context).pop(true);
         return;

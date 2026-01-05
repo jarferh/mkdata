@@ -38,15 +38,37 @@ void showNetworkErrorSnackBar(
 }) {
   final message = getFriendlyNetworkErrorMessage(e);
   if (!context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
+  try {
+    final snack = SnackBar(
       content: Text(
         message,
         style: TextStyle(fontSize: fontSize, color: Colors.white),
       ),
       backgroundColor: Colors.orange.shade800,
       behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       duration: const Duration(seconds: 4),
-    ),
-  );
+    );
+    ScaffoldMessenger.of(context).showSnackBar(snack);
+  } catch (err) {
+    // If showing a floating SnackBar fails (rare on some layouts), fall back
+    // to a less intrusive fixed SnackBar to avoid crashing the app.
+    try {
+      final fallback = SnackBar(
+        content: Text(
+          message,
+          style: TextStyle(fontSize: fontSize, color: Colors.white),
+        ),
+        backgroundColor: Colors.orange.shade800,
+        behavior: SnackBarBehavior.fixed,
+        duration: const Duration(seconds: 4),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(fallback);
+    } catch (_) {
+      // As a last resort, ignore the snackbar to avoid unhandled exceptions
+      // and optionally log to console for debugging.
+      // ignore: avoid_print
+      print('Failed to show SnackBar: $err');
+    }
+  }
 }

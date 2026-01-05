@@ -268,7 +268,7 @@ class User
                 error_log("Database error: " . $e->getMessage());
                 return false;
             }
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             error_log("Error in createVirtualAccount: " . $e->getMessage());
             return false;
         }
@@ -469,7 +469,7 @@ class User
                 error_log("Database error: " . $e->getMessage());
                 return false;
             }
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             error_log("Error in createSelectiveVirtualAccount: " . $e->getMessage());
             return false;
         }
@@ -524,7 +524,7 @@ class User
                         $this->sPhone,
                         $this->sEmail
                     );
-                } catch (Exception $e) {
+                } catch (\Throwable $e) {
                     // Log the error but continue; account can be generated later.
                     error_log("Non-fatal: createVirtualAccount failed for sId={$lastId}: " . $e->getMessage());
                 }
@@ -534,7 +534,7 @@ class User
             }
 
             return false;
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             error_log("Error in create: " . $e->getMessage());
             return false;
         }

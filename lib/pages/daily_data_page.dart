@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -288,19 +287,7 @@ class _DailyDataPageState extends State<DailyDataPage> {
 
       print('Fetching data plans for network $networkName and type $type');
 
-      final prefs = await SharedPreferences.getInstance();
-      String? userId;
-      final rawUser = prefs.getString('user_data');
-      if (rawUser != null) {
-        try {
-          final userJson = json.decode(rawUser);
-          userId = (userJson['sId'] ?? userJson['id'])?.toString();
-        } catch (_) {
-          userId = prefs.getString('user_id');
-        }
-      } else {
-        userId = prefs.getString('user_id');
-      }
+      final userId = await ApiService().getUserId();
 
       final queryParameters = {
         'network': networkName,
@@ -308,23 +295,16 @@ class _DailyDataPageState extends State<DailyDataPage> {
         if (userId != null) 'userId': userId,
       };
 
-      final uri = Uri.parse(
-        'https://api.mkdata.com.ng/api/data-plans',
-      ).replace(queryParameters: queryParameters);
-
-      final response = await http.get(uri);
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 'success' && data['data'] != null) {
-          final plans = (data['data'] as List)
-              .map((plan) => DataPlan.fromJson(plan))
-              .toList();
-
-          setState(() {
-            _dataPlans = plans;
-          });
-        }
+      final api = ApiService();
+      final query = Uri(queryParameters: queryParameters).query;
+      final data = await api.get('data-plans?$query');
+      if (data['status'] == 'success' && data['data'] != null) {
+        final plans = (data['data'] as List)
+            .map((plan) => DataPlan.fromJson(plan))
+            .toList();
+        setState(() {
+          _dataPlans = plans;
+        });
       } else {
         throw Exception('Failed to load data plans');
       }
@@ -940,19 +920,7 @@ class _DailyDataPageState extends State<DailyDataPage> {
     }
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      String? userId;
-      final rawUser = prefs.getString('user_data');
-      if (rawUser != null) {
-        try {
-          final userJson = json.decode(rawUser);
-          userId = (userJson['sId'] ?? userJson['id'])?.toString();
-        } catch (_) {
-          userId = prefs.getString('user_id');
-        }
-      } else {
-        userId = prefs.getString('user_id');
-      }
+      final userId = await ApiService().getUserId();
 
       if (userId == null) {
         throw Exception('User not authenticated');
@@ -969,23 +937,19 @@ class _DailyDataPageState extends State<DailyDataPage> {
       print('User ID: $userId');
 
       // Call the daily data purchase API
-      final response = await http.post(
-        Uri.parse('https://api.mkdata.com.ng/api/purchase-daily-data'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'user_id': userId,
-          'plan_id': _selectedPlan!.planCode,
-          'network': networkName,
-          'phone_number': _phoneController.text,
-          'user_type': _selectedPlan!.planType,
-          'price_per_day': _selectedPlan!.price,
-          'total_days': _selectedDays,
-          'pin': _pinController.text,
-        }),
-      );
+      final api = ApiService();
+      final response = await api.post('purchase-daily-data', {
+        'user_id': userId,
+        'plan_id': _selectedPlan!.planCode,
+        'network': networkName,
+        'phone_number': _phoneController.text,
+        'user_type': _selectedPlan!.planType,
+        'price_per_day': _selectedPlan!.price,
+        'total_days': _selectedDays,
+        'pin': _pinController.text,
+      });
 
-      print('API Response Status: ${response.statusCode}');
-      print('API Response Body: ${response.body}');
+      print('API Response: $response');
 
       // Dismiss loading dialog
       if (_isPinLoadingShown) {
@@ -995,76 +959,48 @@ class _DailyDataPageState extends State<DailyDataPage> {
         _isPinLoadingShown = false;
       }
 
-      // Guard against empty or invalid JSON responses from the server
-      if (response.statusCode == 200) {
-        if (response.body.trim().isEmpty) {
-          throw Exception('Empty response from server');
-        }
+      if (response['status'] == 'success') {
+        final data = response['data'];
+        final transactionRef =
+            data['transaction_reference'] ??
+            'MK_${DateTime.now().millisecondsSinceEpoch}';
+        final amount =
+            data['total_amount']?.toString() ?? _amountController.text;
+        final transactionDate = DateTime.now().toString();
+        final phoneNumber = _phoneController.text;
 
-        Map<String, dynamic> responseData;
-        try {
-          responseData = json.decode(response.body) as Map<String, dynamic>;
-        } catch (e) {
-          throw Exception('Invalid JSON response from server: $e');
-        }
+        // Clear form
+        _phoneController.clear();
+        _pinController.clear();
+        setState(() {
+          _selectedPlan = null;
+          _amountController.clear();
+          _daysController.text = '1';
+          _selectedDays = 1;
+        });
 
-        if (responseData['status'] == 'success') {
-          final data = responseData['data'];
-          final transactionRef =
-              data['transaction_reference'] ??
-              'MK_${DateTime.now().millisecondsSinceEpoch}';
-          final amount =
-              data['total_amount']?.toString() ?? _amountController.text;
-          final transactionDate = DateTime.now().toString();
-          final phoneNumber = _phoneController.text;
-
-          // Clear form
-          _phoneController.clear();
-          _pinController.clear();
-          setState(() {
-            _selectedPlan = null;
-            _amountController.clear();
-            _daysController.text = '1';
-            _selectedDays = 1;
-          });
-
-          // Navigate to transaction details page
-          if (mounted) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => TransactionDetailsPage(
-                  initialStatus: 'success',
-                  transactionId: transactionRef,
-                  amount: amount,
-                  phoneNumber: phoneNumber,
-                  network: _selectedNetwork,
-                  planName: 'Daily Data ${_selectedPlan?.name ?? ''}',
-                  transactionDate: transactionDate,
-                  planValidity:
-                      '$_selectedDays days (${_selectedPlan?.validity ?? '30'} days validity per day)',
-                  playOnOpen: true,
-                ),
+        // Navigate to transaction details page
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => TransactionDetailsPage(
+                initialStatus: 'success',
+                transactionId: transactionRef,
+                amount: amount,
+                phoneNumber: phoneNumber,
+                network: _selectedNetwork,
+                planName: 'Daily Data ${_selectedPlan?.name ?? ''}',
+                transactionDate: transactionDate,
+                planValidity:
+                    '$_selectedDays days (${_selectedPlan?.validity ?? '30'} days validity per day)',
+                playOnOpen: true,
               ),
-            );
-          }
-        } else {
-          throw Exception(
-            responseData['message'] ?? 'Failed to purchase daily data',
+            ),
           );
         }
       } else {
-        if (response.body.trim().isEmpty) {
-          throw Exception('Server error: ${response.statusCode}');
-        }
-        try {
-          final errorData = json.decode(response.body);
-          throw Exception(
-            errorData['message'] ?? 'Server error: ${response.statusCode}',
-          );
-        } catch (_) {
-          throw Exception('Server error: ${response.statusCode}');
-        }
+        throw Exception(response['message'] ?? 'Failed to purchase daily data');
       }
     } on TimeoutException catch (e) {
       // Dismiss loading dialog

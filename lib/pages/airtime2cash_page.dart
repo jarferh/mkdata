@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
+import '../services/api_service.dart';
+
 import 'dart:convert';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -58,26 +59,15 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
     setState(() => _isLoadingSettings = true);
 
     try {
-      final response = await http
-          .get(
-            Uri.parse('${ApiService.baseUrl}/api/a2c-settings'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-
-        if (data['status'] == 'success') {
-          setState(() {
-            _allSettings = data['data'];
-            _error = null;
-          });
-        } else {
-          _showError(data['message'] ?? 'Failed to load settings');
-        }
+      final api = ApiService();
+      final res = await api.get('a2c-settings');
+      if (res['status'] == 'success' && res['data'] != null) {
+        setState(() {
+          _allSettings = Map<String, dynamic>.from(res['data']);
+          _error = null;
+        });
       } else {
-        _showError('Failed to load settings. Status: ${response.statusCode}');
+        _showError(res['message'] ?? 'Failed to load settings');
       }
     } catch (e) {
       _showError('Error loading settings: ${e.toString()}');
@@ -90,33 +80,20 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
     setState(() => _isLoadingRequests = true);
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
-
+      final api = ApiService();
+      final userId = await api.getUserId();
       if (userId == null) {
         _showError('User not logged in');
         return;
       }
 
-      final response = await http
-          .get(
-            Uri.parse('${ApiService.baseUrl}/api/a2c-requests?user_id=$userId'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-
-        if (data['status'] == 'success') {
-          setState(() {
-            _userRequests = List<Map<String, dynamic>>.from(data['data'] ?? []);
-          });
-        } else {
-          _showError(data['message'] ?? 'Failed to load requests');
-        }
+      final res = await api.get('a2c-requests?user_id=$userId');
+      if (res['status'] == 'success') {
+        setState(() {
+          _userRequests = List<Map<String, dynamic>>.from(res['data'] ?? []);
+        });
       } else {
-        _showError('Failed to load requests');
+        _showError(res['message'] ?? 'Failed to load requests');
       }
     } catch (e) {
       _showError('Error: ${e.toString()}');
@@ -161,8 +138,7 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
     });
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
+      final userId = await ApiService().getUserId();
 
       if (userId == null) {
         throw Exception('User not logged in');
@@ -171,28 +147,22 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
       double airtimeAmount = double.parse(_airtimeAmountController.text);
       double cashAmount = _calculateReceiveAmount(airtimeAmount);
 
-      final response = await http
-          .post(
-            Uri.parse('${ApiService.baseUrl}/api/a2c-submit'),
-            headers: {'Content-Type': 'application/json'},
-            body: json.encode({
-              'user_id': userId,
-              'network': _selectedNetwork,
-              'sender_phone': _senderPhoneController.text,
-              'airtime_amount': airtimeAmount,
-              'cash_amount': cashAmount,
-            }),
-          )
-          .timeout(const Duration(seconds: 10));
+      final api = ApiService();
+      final body = {
+        'user_id': userId,
+        'network': _selectedNetwork,
+        'sender_phone': _senderPhoneController.text,
+        'airtime_amount': airtimeAmount,
+        'cash_amount': cashAmount,
+      };
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-
-        if (data['status'] == 'success') {
+      try {
+        final res = await api.post('a2c-submit', body);
+        if (res['status'] == 'success') {
           setState(() {
-            _submittedReference = data['data']['reference'];
+            _submittedReference = res['data']['reference'];
             _successMessage =
-                'Request submitted successfully! Reference: ${data['data']['reference']}';
+                'Request submitted successfully! Reference: ${res['data']['reference']}';
             _senderPhoneController.clear();
             _airtimeAmountController.clear();
             _selectedNetwork = null;
@@ -200,13 +170,13 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
           });
 
           _showSuccessSnackbar(
-            'Request submitted! Reference: ${data['data']['reference']}',
+            'Request submitted! Reference: ${res['data']['reference']}',
           );
         } else {
-          _showError(data['message'] ?? 'Failed to submit request');
+          _showError(res['message'] ?? 'Failed to submit request');
         }
-      } else {
-        _showError('Failed to submit request. Status: ${response.statusCode}');
+      } on Exception catch (e) {
+        _showError('Failed to submit request: ${e.toString()}');
       }
     } on TimeoutException {
       _showError('Request timed out. Please try again.');
@@ -316,7 +286,6 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        iconTheme: const IconThemeData(color: Colors.white),
         title: const Text('Airtime to Cash'),
         titleTextStyle: const TextStyle(
           color: Colors.white,
@@ -422,7 +391,7 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
   Widget _buildSubmitForm() {
     return SingleChildScrollView(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 100.0),
+        padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -516,7 +485,9 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
                 );
               },
             ),
-            const SizedBox(height: 20), // Network Details (shown when selected)
+            const SizedBox(height: 20),
+
+            // Network Details (shown when selected)
             if (_networkSettings != null) ...[
               Card(
                 color: _getNetworkColor(_selectedNetwork!).withOpacity(0.1),
@@ -607,7 +578,7 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
               ),
               const SizedBox(height: 20),
 
-              // Form     // Form
+              // Form
               Form(
                 key: _formKey,
                 child: Column(
@@ -881,7 +852,7 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
     }
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+      padding: const EdgeInsets.all(16),
       scrollDirection: Axis.horizontal,
       child: SingleChildScrollView(
         scrollDirection: Axis.vertical,
@@ -1058,7 +1029,7 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
                       ),
                     ],
                   );
-                }),
+                }).toList(),
               ],
             ),
           ],

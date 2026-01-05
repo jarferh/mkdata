@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+// use ApiService for network calls so session cookie is included
 import '../services/api_service.dart';
 import '../utils/network_utils.dart';
 import 'transactions_page.dart';
@@ -82,54 +82,40 @@ class _InvitePageState extends State<InvitePage> {
     });
 
     try {
-      final client = http.Client();
-      final response = await client.post(
-        Uri.parse('${ApiService.baseUrl}/api/get-referrals.php'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'user_id': userId}),
-      );
+      final api = ApiService();
+      final response = await api.post('get-referrals.php', {'user_id': userId});
+      if (response['status'] == 'success' && response['data'] != null) {
+        final stats = response['data']['stats'] as Map<String, dynamic>? ?? {};
+        final referralsData =
+            response['data']['referrals'] as List<dynamic>? ?? [];
 
-      if (response.statusCode == 200) {
-        final jsonData = jsonDecode(response.body);
-        if (jsonData != null && jsonData['success'] == true) {
-          final stats = jsonData['stats'] as Map<String, dynamic>;
-          final referralsData = jsonData['referrals'] as List<dynamic>;
-
-          setState(() {
-            totalReferrals = stats['total_referrals'] ?? 0;
-            claimedReferrals = stats['claimed_rewards'] ?? 0;
-            pendingReferrals = stats['pending_rewards'] ?? 0;
-            totalEarned = (stats['total_earned'] ?? 0.0).toDouble();
-
-            referrals = referralsData.map((ref) {
-              return {
-                'id': ref['id'],
-                'name': ref['name'] ?? 'Unknown',
-                'phone': ref['phone'] ?? 'N/A',
-                'email': ref['email'] ?? '',
-                'status':
-                    (ref['reward_claimed'] == true ||
-                        ref['reward_claimed'] == 1)
-                    ? 'claimed'
-                    : 'pending',
-                'joinedDate': ref['referred_date'] ?? '',
-                'commission': ref['reward_amount'] ?? 0.0,
-                'reward_claimed':
-                    ref['reward_claimed'] == true || ref['reward_claimed'] == 1,
-              };
-            }).toList();
-
-            _isLoadingReferrals = false;
-          });
-        } else {
-          setState(() {
-            _isLoadingReferrals = false;
-          });
-        }
-      } else {
         setState(() {
+          totalReferrals = stats['total_referrals'] ?? 0;
+          claimedReferrals = stats['claimed_rewards'] ?? 0;
+          pendingReferrals = stats['pending_rewards'] ?? 0;
+          totalEarned = (stats['total_earned'] ?? 0.0).toDouble();
+
+          referrals = referralsData.map((ref) {
+            return {
+              'id': ref['id'],
+              'name': ref['name'] ?? 'Unknown',
+              'phone': ref['phone'] ?? 'N/A',
+              'email': ref['email'] ?? '',
+              'status':
+                  (ref['reward_claimed'] == true || ref['reward_claimed'] == 1)
+                  ? 'claimed'
+                  : 'pending',
+              'joinedDate': ref['referred_date'] ?? '',
+              'commission': ref['reward_amount'] ?? 0.0,
+              'reward_claimed':
+                  ref['reward_claimed'] == true || ref['reward_claimed'] == 1,
+            };
+          }).toList();
+
           _isLoadingReferrals = false;
         });
+      } else {
+        setState(() => _isLoadingReferrals = false);
       }
     } catch (e) {
       print('[InvitePage] Error fetching referrals: $e');
@@ -141,35 +127,24 @@ class _InvitePageState extends State<InvitePage> {
 
   Future<void> _claimReward(int referralId, double amount) async {
     try {
-      final client = http.Client();
-      final response = await client.post(
-        Uri.parse('${ApiService.baseUrl}/api/claim-referral-reward.php'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'user_id': userId, 'referral_id': referralId}),
-      );
+      final api = ApiService();
+      final response = await api.post('claim-referral-reward.php', {
+        'user_id': userId,
+        'referral_id': referralId,
+      });
 
-      if (response.statusCode == 200) {
-        final jsonData = jsonDecode(response.body);
-        if (jsonData != null && jsonData['success'] == true) {
-          // Update commission balance
-          setState(() {
-            _commission += amount;
-          });
-
-          showNetworkErrorSnackBar(
-            context,
-            'Reward claimed: ₦${amount.toStringAsFixed(2)}',
-          );
-          // Refresh referrals list
-          await _fetchReferrals();
-        } else {
-          showNetworkErrorSnackBar(
-            context,
-            jsonData?['message'] ?? 'Failed to claim reward',
-          );
-        }
+      if (response['status'] == 'success') {
+        setState(() => _commission += amount);
+        showNetworkErrorSnackBar(
+          context,
+          'Reward claimed: ₦${amount.toStringAsFixed(2)}',
+        );
+        await _fetchReferrals();
       } else {
-        showNetworkErrorSnackBar(context, 'Failed to claim reward');
+        showNetworkErrorSnackBar(
+          context,
+          response['message'] ?? 'Failed to claim reward',
+        );
       }
     } catch (e) {
       print('[InvitePage] Error claiming reward: $e');
@@ -290,46 +265,33 @@ class _InvitePageState extends State<InvitePage> {
                       return;
                     }
 
-                    // Call withdrawal API
+                    // Call withdrawal API via ApiService so session cookie is included
                     try {
-                      final client = http.Client();
-                      final response = await client.post(
-                        Uri.parse(
-                          '${ApiService.baseUrl}/api/withdraw-referral.php',
-                        ),
-                        headers: {'Content-Type': 'application/json'},
-                        body: jsonEncode({'user_id': userId, 'amount': amount}),
-                      );
+                      final api = ApiService();
+                      final response = await api.post('withdraw-referral.php', {
+                        'user_id': userId,
+                        'amount': amount,
+                      });
 
-                      if (response.statusCode == 200) {
-                        final jsonData = jsonDecode(response.body);
-                        if (jsonData != null && jsonData['success'] == true) {
-                          // Update commission balance
-                          setState(() {
-                            _commission = (jsonData['new_ref_wallet'] ?? 0.0)
-                                .toDouble();
-                          });
+                      if (response['status'] == 'success') {
+                        setState(() {
+                          _commission =
+                              (response['data']?['new_ref_wallet'] ?? 0.0)
+                                  .toDouble();
+                        });
 
-                          if (mounted) {
-                            Navigator.pop(context);
-                            showNetworkErrorSnackBar(
-                              context,
-                              'Withdrawal successful! ₦${amount.toStringAsFixed(2)} added to main wallet',
-                            );
-                            // Refresh user data to update all balances
-                            await _loadUserData();
-                          }
-                        } else {
+                        if (mounted) {
+                          Navigator.pop(context);
                           showNetworkErrorSnackBar(
                             context,
-                            jsonData?['message'] ?? 'Withdrawal failed',
+                            'Withdrawal successful! ₦${amount.toStringAsFixed(2)} added to main wallet',
                           );
+                          await _loadUserData();
                         }
                       } else {
-                        final jsonData = jsonDecode(response.body);
                         showNetworkErrorSnackBar(
                           context,
-                          jsonData?['message'] ?? 'Withdrawal failed',
+                          response['message'] ?? 'Withdrawal failed',
                         );
                       }
                     } catch (e) {

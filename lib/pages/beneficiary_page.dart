@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
 import '../services/api_service.dart';
 import '../utils/network_utils.dart';
 
@@ -14,6 +13,7 @@ class BeneficiaryPage extends StatefulWidget {
 }
 
 class _BeneficiaryPageState extends State<BeneficiaryPage> {
+  final ApiService _api = ApiService();
   List<Map<String, dynamic>> _beneficiaries = [];
   bool _isLoading = true;
 
@@ -26,24 +26,16 @@ class _BeneficiaryPageState extends State<BeneficiaryPage> {
   Future<void> _loadBeneficiaries() async {
     setState(() => _isLoading = true);
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
+      final userId = await _api.getUserId();
       if (userId == null) throw Exception('Not logged in');
-      final resp = await http.get(
-        Uri.parse('${ApiService.baseUrl}/api/beneficiaries?user_id=$userId'),
-      );
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body);
-        if (data['status'] == 'success') {
-          final list = List<Map<String, dynamic>>.from(data['data']);
-          setState(() {
-            _beneficiaries = list;
-          });
-        } else {
-          throw Exception(data['message'] ?? 'Failed to load');
-        }
+      final data = await _api.get('beneficiaries?user_id=$userId');
+      if (data['status'] == 'success') {
+        final list = List<Map<String, dynamic>>.from(data['data'] ?? []);
+        setState(() {
+          _beneficiaries = list;
+        });
       } else {
-        throw Exception('Failed to fetch beneficiaries');
+        throw Exception(data['message'] ?? 'Failed to load');
       }
     } catch (e) {
       if (mounted) showNetworkErrorSnackBar(context, e);
@@ -99,60 +91,40 @@ class _BeneficiaryPageState extends State<BeneficiaryPage> {
               if (name.isEmpty || phone.isEmpty) return;
               setState(() => _isLoading = true);
               try {
-                final prefs = await SharedPreferences.getInstance();
-                final userId = prefs.getString('user_id');
+                final userId = await _api.getUserId();
                 if (userId == null) throw Exception('Not logged in');
 
                 if (index == null) {
-                  final resp = await http.post(
-                    Uri.parse('${ApiService.baseUrl}/api/beneficiary'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: json.encode({
-                      'user_id': userId,
+                  final d = await _api.post('beneficiary', {
+                    'user_id': userId,
+                    'name': name,
+                    'phone': phone,
+                  });
+                  if (d['status'] == 'success') {
+                    _beneficiaries.add({
+                      'id': d['data'] != null ? d['data']['id'] : null,
                       'name': name,
                       'phone': phone,
-                    }),
-                  );
-                  if (resp.statusCode == 200) {
-                    final d = json.decode(resp.body);
-                    if (d['status'] == 'success') {
-                      // append the returned id
-                      _beneficiaries.add({
-                        'id': d['data']['id'],
-                        'name': name,
-                        'phone': phone,
-                      });
-                    } else {
-                      throw Exception(d['message'] ?? 'Failed to add');
-                    }
+                    });
                   } else {
-                    throw Exception('Failed to add beneficiary');
+                    throw Exception(d['message'] ?? 'Failed to add');
                   }
                 } else {
                   final id = _beneficiaries[index]['id'];
-                  final resp = await http.put(
-                    Uri.parse('${ApiService.baseUrl}/api/beneficiary'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: json.encode({
+                  final d = await _api.post('beneficiary', {
+                    'id': id,
+                    'user_id': userId,
+                    'name': name,
+                    'phone': phone,
+                  });
+                  if (d['status'] == 'success') {
+                    _beneficiaries[index] = {
                       'id': id,
-                      'user_id': userId,
                       'name': name,
                       'phone': phone,
-                    }),
-                  );
-                  if (resp.statusCode == 200) {
-                    final d = json.decode(resp.body);
-                    if (d['status'] == 'success') {
-                      _beneficiaries[index] = {
-                        'id': id,
-                        'name': name,
-                        'phone': phone,
-                      };
-                    } else {
-                      throw Exception(d['message'] ?? 'Failed to update');
-                    }
+                    };
                   } else {
-                    throw Exception('Failed to update beneficiary');
+                    throw Exception(d['message'] ?? 'Failed to update');
                   }
                 }
 
@@ -200,26 +172,19 @@ class _BeneficiaryPageState extends State<BeneficiaryPage> {
     if (confirm == true) {
       setState(() => _isLoading = true);
       try {
-        final prefs = await SharedPreferences.getInstance();
-        final userId = prefs.getString('user_id');
+        final userId = await _api.getUserId();
         if (userId == null) throw Exception('Not logged in');
         final id = _beneficiaries[index]['id'];
-        final resp = await http.delete(
-          Uri.parse('${ApiService.baseUrl}/api/beneficiary'),
-          headers: {'Content-Type': 'application/json'},
-          body: json.encode({'id': id, 'user_id': userId}),
-        );
-        if (resp.statusCode == 200) {
-          final d = json.decode(resp.body);
-          if (d['status'] == 'success') {
-            _beneficiaries.removeAt(index);
-            await _saveBeneficiaries();
-            setState(() {});
-          } else {
-            throw Exception(d['message'] ?? 'Delete failed');
-          }
+        final d = await _api.delete('beneficiary', {
+          'id': id,
+          'user_id': userId,
+        });
+        if (d['status'] == 'success') {
+          _beneficiaries.removeAt(index);
+          await _saveBeneficiaries();
+          setState(() {});
         } else {
-          throw Exception('Failed to delete beneficiary');
+          throw Exception(d['message'] ?? 'Delete failed');
         }
       } catch (e) {
         if (mounted) showNetworkErrorSnackBar(context, e);

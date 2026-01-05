@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import '../services/api_service.dart';
 import 'login_page.dart';
 import '../utils/network_utils.dart';
 
@@ -15,17 +13,10 @@ class DeleteAccountPage extends StatefulWidget {
 class _DeleteAccountPageState extends State<DeleteAccountPage> {
   final _reasonController = TextEditingController();
   bool _isLoading = false;
-  String? _userId;
 
   @override
   void initState() {
     super.initState();
-    _loadUserId();
-  }
-
-  Future<void> _loadUserId() async {
-    final prefs = await SharedPreferences.getInstance();
-    _userId = prefs.getString('user_id');
   }
 
   Future<void> _deleteAccount() async {
@@ -41,54 +32,32 @@ class _DeleteAccountPageState extends State<DeleteAccountPage> {
     });
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
+      final userId = await ApiService().getUserId();
 
       if (userId == null) {
         throw Exception('User ID not found');
       }
 
-      // Make API call to delete account
-      final response = await http.post(
-        Uri.parse('https://api.mkdata.com.ng/api/delete-account'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'userId': userId,
-          'reason': _reasonController.text.trim(),
-        }),
-      );
+      // Use ApiService to make a session-authenticated request
+      final api = ApiService();
+      final res = await api.post('delete-account', {
+        'user_id': userId,
+        'reason': _reasonController.text.trim(),
+      });
 
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['status'] == 'success') {
-          // Clear all stored data
-          await prefs.clear();
-
-          if (mounted) {
-            // Show success message and navigate to login
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Account deleted successfully')),
-            );
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const LoginPage()),
-              (route) => false,
-            );
-          }
-        } else {
-          throw Exception(
-            responseData['message'] ?? 'Failed to delete account',
+      if (res['status'] == 'success') {
+        await ApiService().clearAuth();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Account deleted successfully')),
+          );
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const LoginPage()),
+            (route) => false,
           );
         }
       } else {
-        // Try to get message from server
-        String msg = 'Failed to delete account';
-        try {
-          final responseData = json.decode(response.body);
-          if (responseData is Map && responseData['message'] != null) {
-            msg = responseData['message'].toString();
-          }
-        } catch (_) {}
-        throw Exception(msg);
+        throw Exception(res['message'] ?? 'Failed to delete account');
       }
     } catch (e) {
       if (mounted) showNetworkErrorSnackBar(context, e.toString());

@@ -3,7 +3,7 @@ import 'package:flutter/services.dart'; // Add this import for SystemNavigator
 import 'dart:convert';
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
+import '../services/api_service.dart';
 import 'package:marquee/marquee.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'wallet_page.dart';
@@ -341,7 +341,7 @@ class _DashboardPageState extends State<DashboardPage> {
     try {
       prefs = await SharedPreferences.getInstance();
 
-      String? userId = prefs.getString('user_id');
+      String? userId = await ApiService().getUserId();
       String? userDataStr = prefs.getString('user_data');
 
       // If we have cached data, display it immediately and do a silent refresh.
@@ -355,21 +355,15 @@ class _DashboardPageState extends State<DashboardPage> {
       }
 
       // Fetch latest data in background
-      final response = await http.get(
-        Uri.parse('https://api.mkdata.com.ng/api/subscriber?id=$userId'),
-      );
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['status'] == 'success' &&
-            responseData['data'] != null) {
-          await prefs.setString('user_data', json.encode(responseData['data']));
-          if (mounted) {
-            setState(() {
-              _userData = responseData['data'];
-              _userLoadFailed = false;
-            });
-          }
+      final api = ApiService();
+      final responseData = await api.get('subscriber?id=$userId');
+      if (responseData['status'] == 'success' && responseData['data'] != null) {
+        await prefs.setString('user_data', json.encode(responseData['data']));
+        if (mounted) {
+          setState(() {
+            _userData = responseData['data'];
+            _userLoadFailed = false;
+          });
         }
       } else {
         // If no cached data exists, mark load failure so UI can show a loader/error.
@@ -401,47 +395,28 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _checkWelcomeBonusStatus() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
+      final userId = await ApiService().getUserId();
 
       if (userId == null) return;
 
       // Fetch bonus settings
-      final settingsResponse = await http
-          .get(
-            Uri.parse('https://api.mkdata.com.ng/api/welcome-bonus-settings'),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (settingsResponse.statusCode == 200) {
-        final settingsData = json.decode(settingsResponse.body);
-        if (settingsData['status'] == 'success') {
-          setState(() {
-            _bonusAmount = double.parse(
-              settingsData['data']['amount'].toString(),
-            );
-          });
-        }
+      final api = ApiService();
+      final settingsData = await api.get('welcome-bonus-settings');
+      if (settingsData['status'] == 'success') {
+        setState(() {
+          _bonusAmount = double.parse(
+            settingsData['data']['amount'].toString(),
+          );
+        });
       }
 
-      // Fetch user's bonus status
-      final statusResponse = await http
-          .get(
-            Uri.parse(
-              'https://api.mkdata.com.ng/api/welcome-bonus-status?user_id=$userId',
-            ),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (statusResponse.statusCode == 200) {
-        final statusData = json.decode(statusResponse.body);
-        if (statusData['status'] == 'success') {
-          final data = statusData['data'];
-          if (mounted) {
-            setState(() {
-              _bonusClaimable = !(data['has_claimed'] ?? false);
-            });
-          }
+      final statusData = await api.get('welcome-bonus-status?user_id=$userId');
+      if (statusData['status'] == 'success') {
+        final data = statusData['data'];
+        if (mounted) {
+          setState(() {
+            _bonusClaimable = !(data['has_claimed'] ?? false);
+          });
         }
       }
     } catch (e) {
@@ -511,23 +486,14 @@ class _DashboardPageState extends State<DashboardPage> {
         _isGeneratingAccounts = true;
       });
 
-      final prefs = await SharedPreferences.getInstance();
-      String? userId = prefs.getString('user_id');
+      String? userId = await ApiService().getUserId();
       if (userId == null && _userData != null && _userData!['sId'] != null) {
         userId = _userData!['sId'].toString();
       }
 
-      final uri = Uri.parse(
-        'https://api.mkdata.com.ng/api/generate-palmpay-paga',
-      );
-      final response = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'user_id': userId}),
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
+      final api = ApiService();
+      final data = await api.post('generate-palmpay-paga', {'user_id': userId});
+      if (data['status'] == 'success') {
         if (data['status'] == 'success') {
           final pagaAcct = data['data']?['paga_account'] ?? '';
           final palmpayAcct = data['data']?['palmpay_account'] ?? '';
@@ -543,6 +509,7 @@ class _DashboardPageState extends State<DashboardPage> {
           // Mark that accounts were generated in the app
           updated['sBankName'] = 'app';
 
+          final prefs = await SharedPreferences.getInstance();
           await prefs.setString('user_data', json.encode(updated));
 
           if (mounted) {
@@ -558,15 +525,6 @@ class _DashboardPageState extends State<DashboardPage> {
           final msg = data['message'] ?? 'Failed to generate accounts';
           throw Exception(msg);
         }
-      } else {
-        String msg = 'Server error: ${response.statusCode}';
-        try {
-          final body = json.decode(response.body);
-          if (body is Map && body['message'] != null) {
-            msg = body['message'].toString();
-          }
-        } catch (_) {}
-        throw Exception(msg);
       }
     } catch (e) {
       if (mounted) {

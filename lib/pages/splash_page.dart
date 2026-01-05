@@ -47,7 +47,7 @@ class _SplashPageState extends State<SplashPage> {
     final userData = prefs.getString('user_data');
     final onboardingCompleted = prefs.getBool('onboarding_completed') ?? false;
 
-    await Future.delayed(const Duration(seconds: 5));
+    await Future.delayed(const Duration(seconds: 3));
 
     if (mounted) {
       if (userData != null) {

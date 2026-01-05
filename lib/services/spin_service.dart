@@ -1,6 +1,4 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import '../services/api_service.dart';
 import '../models/spin_reward.dart';
 import '../models/spin_win.dart';
 
@@ -28,34 +26,22 @@ class SpinCooldownStatus {
 }
 
 class SpinService {
-  static const String baseUrl = 'https://api.mkdata.com.ng';
-  final http.Client _client = http.Client();
-  final Future<SharedPreferences> _prefs = SharedPreferences.getInstance();
+  final ApiService _api = ApiService();
 
   Future<String?> _getUserId() async {
-    final prefs = await _prefs;
-    return prefs.getString('user_id');
+    return await _api.getUserId();
   }
 
   /// Fetch all active spin rewards with their weights
   Future<List<SpinReward>> getSpinRewards() async {
     try {
-      final response = await _client
-          .get(
-            Uri.parse('$baseUrl/api/spin-rewards'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['status'] == 'success' && data['data'] is List) {
-          final rewards = (data['data'] as List)
-              .map((r) => SpinReward.fromJson(r as Map<String, dynamic>))
-              .where((r) => r.active) // Only active rewards
-              .toList();
-          return rewards;
-        }
+      final resp = await _api.get('spin-rewards');
+      if (resp['status'] == 'success' && resp['data'] is List) {
+        final rewards = (resp['data'] as List)
+            .map((r) => SpinReward.fromJson(r as Map<String, dynamic>))
+            .where((r) => r.active)
+            .toList();
+        return rewards;
       }
       throw Exception('Failed to fetch spin rewards');
     } catch (e) {
@@ -72,44 +58,24 @@ class SpinService {
         throw Exception('User not authenticated');
       }
 
-      final response = await _client
-          .post(
-            Uri.parse('$baseUrl/api/perform-spin'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'user_id': userId}),
-          )
-          .timeout(const Duration(seconds: 15));
+      final resp = await _api.post('perform-spin', {'user_id': userId});
 
-      if (response.body.trim().isEmpty) {
-        throw Exception('Empty response from server');
-      }
-      final body = jsonDecode(response.body);
-      if (response.statusCode == 200) {
-        if (body['status'] == 'success' && body['data'] != null) {
-          return SpinWin.fromJson(body['data'] as Map<String, dynamic>);
-        }
-        throw Exception(
-          'Failed to perform spin: ${body['message'] ?? 'Unknown error'}',
-        );
+      if (resp['status'] == 'success' && resp['data'] != null) {
+        return SpinWin.fromJson(resp['data'] as Map<String, dynamic>);
       }
 
-      // Handle cooldown specifically if server responded with 429
-      if (response.statusCode == 429) {
-        final data = body is Map<String, dynamic> ? body['data'] ?? {} : {};
-        final seconds = data != null && data['time_until_next_spin'] != null
-            ? int.tryParse(data['time_until_next_spin'].toString())
-            : null;
+      // If server indicates cooldown via data field
+      final data = resp['data'];
+      if (data != null && data is Map && data['time_until_next_spin'] != null) {
+        final seconds = int.tryParse(data['time_until_next_spin'].toString());
         throw SpinCooldownException(
-          body['message'] ?? 'Cooldown active',
+          resp['message'] ?? 'Cooldown active',
           secondsUntilNextSpin: seconds,
         );
       }
 
-      throw Exception(
-        'Failed to perform spin: ${body['message'] ?? 'Unknown error'}',
-      );
+      throw Exception('Failed to perform spin: ${resp['message'] ?? resp}');
     } catch (e) {
-      // Pass through cooldown exceptions so callers can handle them specially
       if (e is SpinCooldownException) rethrow;
       throw Exception('Error performing spin: $e');
     }
@@ -123,29 +89,20 @@ class SpinService {
         throw Exception('User not authenticated');
       }
 
-      final response = await _client
-          .get(
-            Uri.parse('$baseUrl/api/last-spin-time?user_id=$userId'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final body = jsonDecode(response.body);
-        if (body['status'] == 'success' && body['data'] != null) {
-          final data = body['data'];
-          final lastSpin = data['last_spin_time'];
-          final next = data['next_spin_available'];
-          return SpinCooldownStatus(
-            canSpinNow: data['can_spin_now'] == true,
-            lastSpinTime: lastSpin != null
-                ? DateTime.parse(lastSpin.toString())
-                : null,
-            nextSpinAvailable: next != null
-                ? DateTime.parse(next.toString())
-                : null,
-          );
-        }
+      final resp = await _api.get('last-spin-time?user_id=$userId');
+      if (resp['status'] == 'success' && resp['data'] != null) {
+        final data = resp['data'];
+        final lastSpin = data['last_spin_time'];
+        final next = data['next_spin_available'];
+        return SpinCooldownStatus(
+          canSpinNow: data['can_spin_now'] == true,
+          lastSpinTime: lastSpin != null
+              ? DateTime.parse(lastSpin.toString())
+              : null,
+          nextSpinAvailable: next != null
+              ? DateTime.parse(next.toString())
+              : null,
+        );
       }
       return null;
     } catch (e) {
@@ -161,23 +118,14 @@ class SpinService {
         throw Exception('User not authenticated');
       }
 
-      final response = await _client
-          .get(
-            Uri.parse('$baseUrl/api/spin-history?user_id=$userId'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['status'] == 'success' && data['data'] is List) {
-          final wins = (data['data'] as List)
-              .map((w) => SpinWin.fromJson(w as Map<String, dynamic>))
-              .toList();
-          // Sort by spin_at descending (newest first)
-          wins.sort((a, b) => b.spinAt.compareTo(a.spinAt));
-          return wins;
-        }
+      final resp = await _api.get('spin-history?user_id=$userId');
+      if (resp['status'] == 'success' && resp['data'] is List) {
+        final wins = (resp['data'] as List)
+            .map((w) => SpinWin.fromJson(w as Map<String, dynamic>))
+            .toList();
+        // Sort by spin_at descending (newest first)
+        wins.sort((a, b) => b.spinAt.compareTo(a.spinAt));
+        return wins;
       }
       return []; // Return empty list if no history
     } catch (e) {
@@ -207,19 +155,9 @@ class SpinService {
       if (phone != null) body['phone'] = phone;
       if (networkId != null) body['network'] = networkId;
 
-      final response = await _client
-          .post(
-            Uri.parse('$baseUrl/api/claim-spin-reward'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(body),
-          )
-          .timeout(const Duration(seconds: 15));
+      final resp = await _api.post('claim-spin-reward', body);
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['status'] == 'success';
-      }
-      return false;
+      return resp['status'] == 'success';
     } catch (e) {
       throw Exception('Error claiming reward: $e');
     }
@@ -228,18 +166,9 @@ class SpinService {
   /// Fetch available networks for delivery (id and name)
   Future<List<Map<String, dynamic>>> getNetworks() async {
     try {
-      final response = await _client
-          .get(
-            Uri.parse('$baseUrl/api/networks'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['status'] == 'success' && data['data'] is List) {
-          return List<Map<String, dynamic>>.from(data['data']);
-        }
+      final resp = await _api.get('networks');
+      if (resp['status'] == 'success' && resp['data'] is List) {
+        return List<Map<String, dynamic>>.from(resp['data']);
       }
       return [];
     } catch (e) {
@@ -255,20 +184,11 @@ class SpinService {
         throw Exception('User not authenticated');
       }
 
-      final response = await _client
-          .get(
-            Uri.parse('$baseUrl/api/pending-spin-rewards?user_id=$userId'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['status'] == 'success' && data['data'] is List) {
-          return (data['data'] as List)
-              .map((w) => SpinWin.fromJson(w as Map<String, dynamic>))
-              .toList();
-        }
+      final resp = await _api.get('pending-spin-rewards?user_id=$userId');
+      if (resp['status'] == 'success' && resp['data'] is List) {
+        return (resp['data'] as List)
+            .map((w) => SpinWin.fromJson(w as Map<String, dynamic>))
+            .toList();
       }
       return [];
     } catch (e) {
@@ -284,20 +204,11 @@ class SpinService {
         throw Exception('User not authenticated');
       }
 
-      final response = await _client
-          .get(
-            Uri.parse('$baseUrl/api/last-spin-time?user_id=$userId'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['status'] == 'success' && data['data'] != null) {
-          final lastSpinTime = data['data']['last_spin_time'];
-          if (lastSpinTime != null) {
-            return DateTime.parse(lastSpinTime.toString());
-          }
+      final resp = await _api.get('last-spin-time?user_id=$userId');
+      if (resp['status'] == 'success' && resp['data'] != null) {
+        final lastSpinTime = resp['data']['last_spin_time'];
+        if (lastSpinTime != null) {
+          return DateTime.parse(lastSpinTime.toString());
         }
       }
       return null;

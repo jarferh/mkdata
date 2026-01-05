@@ -2,7 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
+import '../services/api_service.dart';
 import 'dart:convert';
 import 'firebase_options.dart';
 
@@ -94,10 +94,11 @@ class FirebaseService {
       _prefs.setString('fcm_token', newToken);
 
       // If user is logged in, send new token to backend
-      final userId = _prefs.getString('user_id');
-      if (userId != null && userId.isNotEmpty) {
-        sendTokenToBackend(userId: userId, deviceType: 'android');
-      }
+      ApiService().getUserId().then((userId) {
+        if (userId != null && userId.isNotEmpty) {
+          sendTokenToBackend(userId: userId, deviceType: 'android');
+        }
+      });
     });
   }
 
@@ -165,31 +166,21 @@ class FirebaseService {
       // Determine device type if not provided
       final detectedDeviceType = _getDeviceType();
 
-      final response = await http
-          .post(
-            Uri.parse('https://api.mkdata.com.ng/api/device/register'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'user_id': userId,
-              'fcm_token': token,
-              'device_type': deviceType.isEmpty
-                  ? detectedDeviceType
-                  : deviceType,
-            }),
-          )
-          .timeout(
-            const Duration(seconds: 10),
-            onTimeout: () {
-              debugPrint('✗ Token registration timeout');
-              return http.Response('timeout', 408);
-            },
-          );
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        debugPrint('✓ FCM token sent to backend');
-        return true;
-      } else {
-        debugPrint('✗ Failed to send token to backend: ${response.statusCode}');
+      try {
+        final api = ApiService();
+        final res = await api.post('device/register', {
+          'user_id': userId,
+          'fcm_token': token,
+          'device_type': deviceType.isEmpty ? detectedDeviceType : deviceType,
+        });
+        if (res['status'] == 'success') {
+          debugPrint('✓ FCM token sent to backend');
+          return true;
+        }
+        debugPrint('✗ Failed to send token to backend: ${res['message']}');
+        return false;
+      } catch (e) {
+        debugPrint('✗ Error sending token to backend: $e');
         return false;
       }
     } catch (e) {

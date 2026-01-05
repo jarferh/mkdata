@@ -7,3 +7,12 @@ RewriteRule ^(.*)$ index.php [QSA,L,E=REQUEST_PATH:$1]
 Header set Access-Control-Allow-Origin "*"
 Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
 Header set Access-Control-Allow-Headers "Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With"
+# Protect Firebase service account key files
+<FilesMatch "firebase.*\.json|\.env|\.git">
+    Deny from all
+</FilesMatch>
+
+# Prevent direct access to keys directory
+<DirectoryMatch "^/srv/keys">
+    Deny from all
+</DirectoryMatch>

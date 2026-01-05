@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../services/api_service.dart';
 
 class CommissionHistoryPage extends StatefulWidget {
@@ -45,12 +44,10 @@ class _CommissionHistoryPageState extends State<CommissionHistoryPage> {
         return;
       }
 
-      final base = ApiService.baseUrl;
-      final url = Uri.parse('$base/commissions?user_id=$userId');
-
-      final res = await http.get(url).timeout(const Duration(seconds: 15));
-      final decoded = json.decode(res.body);
-      if (res.statusCode != 200) {
+      final api = ApiService();
+      final decoded = await api.get('commissions?user_id=$userId');
+      if (decoded == null ||
+          decoded['statusCode'] != null && decoded['statusCode'] != 200) {
         setState(() {
           _error = decoded is Map && decoded['message'] != null
               ? decoded['message'].toString()
@@ -64,7 +61,7 @@ class _CommissionHistoryPageState extends State<CommissionHistoryPage> {
       if (decoded is Map && decoded['commissions'] != null) {
         list = decoded['commissions'] as List<dynamic>;
       } else if (decoded is List) {
-        list = decoded;
+        list = decoded as List<dynamic>;
       } else if (decoded is Map && decoded['data'] != null) {
         list = decoded['data'] as List<dynamic>;
       } else {

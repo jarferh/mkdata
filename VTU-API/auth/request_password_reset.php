@@ -10,11 +10,15 @@ header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../vendor/autoload.php'; // For PHPMailer
+require_once __DIR__ . '/../auth/session-helper.php';
 
 use Binali\Config\Database;
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\SMTP;
 use PHPMailer\PHPMailer\Exception;
+
+// Load environment variables
+loadEnvFile(__DIR__ . '/../.env');
 
 // Rate limiting using sessions
 session_start();
@@ -138,14 +142,18 @@ try {
     try {
         // Server settings
         $mail->isSMTP();
-        $mail->Host = 'mail.mkdata.com.ng';
+        $mail->Host = getenv('MAIL_HOST') ?: 'mail.mkdata.com.ng';
         $mail->SMTPAuth = true;
-        $mail->Username = 'no-reply@mkdata.com.ng';
-        $mail->Password = ']xG28YL,APm-+xbx';
+        $mail->Username = getenv('MAIL_USERNAME') ?: 'no-reply@mkdata.com.ng';
+        $mail->Password = getenv('MAIL_PASSWORD');
+        
+        if (!$mail->Password) {
+            throw new Exception('MAIL_PASSWORD not configured in environment');
+        }
 
         // Use STARTTLS for port 587
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port = 587;
+        $mail->Port = (int)(getenv('MAIL_PORT') ?: 587);
         
         // Disable debugging in production
         $mail->SMTPDebug = 0;
@@ -153,7 +161,7 @@ try {
             // Silent - debugging disabled
         };
 
-        $mail->setFrom('no-reply@mkdata.com.ng', 'MK DATA');
+        $mail->setFrom(getenv('MAIL_USERNAME') ?: 'no-reply@mkdata.com.ng', 'MK DATA');
         $mail->addAddress($email);
 
         // Content

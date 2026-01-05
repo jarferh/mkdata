@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+
 import '../services/api_service.dart';
 import '../utils/network_utils.dart';
 
@@ -69,31 +67,21 @@ class _ManualRequestsPageState extends State<ManualRequestsPage> {
     });
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
+      final userId = await ApiService().getUserId();
       if (userId == null) throw Exception('User not logged in');
 
       // If the API prefers sId (subscriber id) include it as well. We already
       // have userId; use it for both params to be safe when the backing API
       // expects the subscriber id field named 'sId'.
-      final response = await http.get(
-        Uri.parse(
-          '${ApiService.baseUrl}/api/manual-payments?user_id=$userId&sId=$userId',
-        ),
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 'success') {
-          final list = List<Map<String, dynamic>>.from(data['data'] ?? []);
-          setState(() {
-            _requests = list.map((j) => ManualRequest.fromJson(j)).toList();
-          });
-        } else {
-          throw Exception(data['message'] ?? 'Failed to fetch requests');
-        }
+      final api = ApiService();
+      final data = await api.get('manual-payments?user_id=$userId&sId=$userId');
+      if (data['status'] == 'success') {
+        final list = List<Map<String, dynamic>>.from(data['data'] ?? []);
+        setState(() {
+          _requests = list.map((j) => ManualRequest.fromJson(j)).toList();
+        });
       } else {
-        throw Exception('Failed to fetch requests');
+        throw Exception(data['message'] ?? 'Failed to fetch requests');
       }
     } catch (e) {
       if (mounted) showNetworkErrorSnackBar(context, e);

@@ -2,10 +2,33 @@
 // Set timezone to GMT+1 (Africa/Lagos)
 date_default_timezone_set('Africa/Lagos');
 
-header("Access-Control-Allow-Origin: *");
+// Allow credentials with specific origins
+$allowedOrigins = [
+    'http://localhost',
+    'https://localhost',
+    'https://api.mkdata.com.ng',
+    'https://mkdata.com.ng',
+];
+
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, $allowedOrigins) || php_sapi_name() === 'cli') {
+    header("Access-Control-Allow-Origin: $origin");
+    header("Access-Control-Allow-Credentials: true");
+} else {
+    // For all other origins
+    header("Access-Control-Allow-Origin: *");
+}
+
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+
+// Load environment variables from .env file
+require_once __DIR__ . '/../auth/session-helper.php';
+loadEnvFile(__DIR__ . '/../.env');
+
+// Initialize session for user authentication
+initializeSession();
 
 // Handle preflight requests
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -211,14 +234,18 @@ try {
                 throw new Exception('Method not allowed');
             }
 
+            // Get authenticated user ID from session (not from client input)
+            $authenticatedUserId = requireAuth();
+            
             $data = json_decode(file_get_contents("php://input"));
-            if (!isset($data->userId) || !isset($data->reason)) {
-                throw new Exception('Missing required parameters');
+            if (!isset($data->reason)) {
+                throw new Exception('Missing required parameter: reason');
             }
 
             try {
                 $user_service = new UserService();
-                $response['data'] = $user_service->deleteAccount($data->userId, $data->reason);
+                // Use session user ID, not client-supplied userId
+                $response['data'] = $user_service->deleteAccount($authenticatedUserId, $data->reason);
                 $response['status'] = 'success';
                 $response['message'] = 'Account deleted successfully';
             } catch (PDOException $e) {
@@ -235,6 +262,9 @@ try {
                 throw new Exception('Method not allowed');
             }
 
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             $rawInput = file_get_contents("php://input");
             error_log("Raw input: " . $rawInput);
 
@@ -245,12 +275,11 @@ try {
 
             error_log("Decoded data: " . print_r($data, true));
 
-            if (!isset($data->network) || !isset($data->phone) || !isset($data->amount) || !isset($data->user_id)) {
+            if (!isset($data->network) || !isset($data->phone) || !isset($data->amount)) {
                 throw new Exception('Missing required parameters: ' .
                     (!isset($data->network) ? 'network ' : '') .
                     (!isset($data->phone) ? 'phone ' : '') .
-                    (!isset($data->amount) ? 'amount ' : '') .
-                    (!isset($data->user_id) ? 'user_id' : ''));
+                    (!isset($data->amount) ? 'amount ' : ''));
             }
 
             // Resolve network: allow client to send either numeric id or network name
@@ -263,8 +292,8 @@ try {
             }
 
             $service = new AirtimeService();
-            // Let the service accept either numeric id or name; we pass resolved value when possible
-            $svcResult = $service->purchaseAirtime($networkForService, $data->phone, $data->amount, $data->user_id);
+            // Use authenticated user ID from session, not client-supplied user_id
+            $svcResult = $service->purchaseAirtime($networkForService, $data->phone, $data->amount, $authenticatedUserId);
 
             // Normalize and propagate to top-level response
             $response['data'] = $svcResult['data'] ?? $svcResult;
@@ -274,7 +303,7 @@ try {
             // Send push notification for all attempts (success and failure)
             try {
                 sendTransactionNotification(
-                    userId: (string)$data->user_id,
+                    userId: (string)$authenticatedUserId,
                     transactionType: 'airtime',
                     transactionData: [
                         'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
@@ -354,6 +383,9 @@ try {
                 throw new Exception('Method not allowed');
             }
 
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             $data = json_decode(file_get_contents("php://input"));
 
             // Debug the received data
@@ -364,29 +396,28 @@ try {
             $networkId = resolveNetworkIdFromInput($networkIdInput);
             $phone = $data->mobile_number ?? $data->phone ?? $data->phoneNumber ?? null;
             $planId = $data->plan ?? $data->plan_id ?? $data->planId ?? null;
-            $userId = $data->user_id ?? $data->userId ?? null;
 
             error_log("Mapped parameters:");
             error_log("Network ID: " . $networkId);
             error_log("Phone: " . $phone);
             error_log("Plan ID: " . $planId);
-            error_log("User ID: " . $userId);
+            error_log("User ID: " . $authenticatedUserId);
 
-            if (!$networkId || !$phone || !$planId || !$userId) {
-                error_log("Missing parameters. Required: network/network_id, mobile_number/phone, plan/plan_id, user_id");
+            if (!$networkId || !$phone || !$planId) {
+                error_log("Missing parameters. Required: network/network_id, mobile_number/phone, plan/plan_id");
                 error_log("Received raw data: " . print_r($data, true));
                 error_log("Mapped values: " . json_encode([
                     'network_id' => $networkId,
                     'phone' => $phone,
                     'plan_id' => $planId,
-                    'user_id' => $userId
+                    'user_id' => $authenticatedUserId
                 ]));
                 throw new Exception('Missing required parameters');
             }
 
             $service = new DataService();
-            // Let the service accept numeric id; pass resolved network id
-            $svcResult = $service->purchaseData($networkId, $phone, $planId, $userId);
+            // Use authenticated user ID from session, not client-supplied user_id
+            $svcResult = $service->purchaseData($networkId, $phone, $planId, $authenticatedUserId);
 
             // Normalize and propagate to top-level response
             $response['data'] = $svcResult['data'] ?? $svcResult;
@@ -399,7 +430,7 @@ try {
                 // Only send notification for success or processing states
                 if (in_array($notifStatus, ['success', 'processing'], true)) {
                     sendTransactionNotification(
-                        userId: (string)$userId,
+                        userId: (string)$authenticatedUserId,
                         transactionType: 'data',
                         transactionData: [
                             'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
@@ -484,42 +515,43 @@ try {
                 throw new Exception("Invalid request method");
             }
 
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             $data = json_decode(file_get_contents("php://input"));
             if (!isset($data->meterNumber) || !isset($data->providerId) || !isset($data->amount)) {
                 throw new Exception("Missing required parameters");
             }
 
-            // Check if userId is provided for balance verification
-            $userId = $data->userId ?? null;
-            if (!empty($userId)) {
-                // Fetch user wallet balance
-                $dbBalance = new Database();
-                $userQuery = "SELECT sWallet FROM subscribers WHERE sId = ?";
-                $userResult = $dbBalance->query($userQuery, [$userId]);
+            // Check if userId is provided for balance verification (use session user)
+            $userId = $authenticatedUserId;
+            
+            // Fetch user wallet balance
+            $dbBalance = new Database();
+            $userQuery = "SELECT sWallet FROM subscribers WHERE sId = ?";
+            $userResult = $dbBalance->query($userQuery, [$userId]);
+            
+            if (!empty($userResult)) {
+                $userWallet = (float)($userResult[0]['sWallet'] ?? 0);
+                $amount = (float)$data->amount;
                 
-                if (!empty($userResult)) {
-                    $userWallet = (float)($userResult[0]['sWallet'] ?? 0);
-                    $amount = (float)$data->amount;
-                    
-                    if ($userWallet < $amount) {
-                        http_response_code(402); // 402 Payment Required
-                        echo json_encode([
-                            'status' => 'error',
-                            'message' => 'Insufficient balance. Your wallet balance is ₦' . number_format($userWallet, 2),
-                            'data' => [
-                                'current_balance' => $userWallet,
-                                'required_amount' => $amount
-                            ]
-                        ]);
-                        exit();
-                    }
+                if ($userWallet < $amount) {
+                    http_response_code(402); // 402 Payment Required
+                    echo json_encode([
+                        'status' => 'error',
+                        'message' => 'Insufficient balance. Your wallet balance is ₦' . number_format($userWallet, 2),
+                        'data' => [
+                            'current_balance' => $userWallet,
+                            'required_amount' => $amount
+                        ]
+                    ]);
+                    exit();
                 }
             }
 
             // Call provider first; debit wallet only if provider reports success
             $transactionId = null;
             $transRef = 'ELEC-' . time();
-            $userId = $data->userId ?? null;
             $dbTrans = null;
             $oldBalance = null;
             $newBalance = null;
@@ -553,36 +585,35 @@ try {
                 $response['token'] = $cleanToken;
             }
 
-            // If a userId was provided, persist transaction and only debit on provider success
-            if (!empty($userId)) {
-                try {
-                    $dbTrans = new Database();
-                    $conn = $dbTrans->getConnection();
-                    $conn->beginTransaction();
+            // Persist transaction and only debit on provider success
+            try {
+                $dbTrans = new Database();
+                $conn = $dbTrans->getConnection();
+                $conn->beginTransaction();
 
-                    // Fetch current balance
-                    $balanceRow = $dbTrans->query("SELECT sWallet FROM subscribers WHERE sId = ? LIMIT 1", [$userId]);
-                    $oldBalance = (float)($balanceRow[0]['sWallet'] ?? 0);
-                    $amount = (float)$data->amount;
+                // Fetch current balance
+                $balanceRow = $dbTrans->query("SELECT sWallet FROM subscribers WHERE sId = ? LIMIT 1", [$userId]);
+                $oldBalance = (float)($balanceRow[0]['sWallet'] ?? 0);
+                $amount = (float)$data->amount;
 
-                    $serviceDesc = "Electricity purchase: Meter {$data->meterNumber}";
-                    $apiResponseLog = json_encode($svcResult['data'] ?? $svcResult);
+                $serviceDesc = "Electricity purchase: Meter {$data->meterNumber}";
+                $apiResponseLog = json_encode($svcResult['data'] ?? $svcResult);
 
-                    if (($svcResult['status'] ?? '') === 'success') {
-                        // Ensure user still has sufficient funds before debiting
-                        if ($oldBalance < $amount) {
-                            // Insert failed transaction due to insufficient balance at commit time
-                            $dbTrans->query("INSERT INTO transactions (sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response, date) VALUES (?, ?, 'ELECTRICITY', ?, ?, 1, ?, ?, ?, NOW())", [$userId, $transRef, $serviceDesc, $amount, $oldBalance, $oldBalance, $apiResponseLog]);
-                            $transactionId = $dbTrans->lastInsertId();
-                            $transRef = $transRef . '-' . $transactionId;
-                            $dbTrans->query("UPDATE transactions SET transref = ? WHERE tId = ?", [$transRef, $transactionId]);
-                            $conn->commit();
-                        } else {
-                            // Debit wallet and record success transaction
-                            $newBalance = $oldBalance - $amount;
-                            $dbTrans->query("UPDATE subscribers SET sWallet = sWallet - ? WHERE sId = ?", [$amount, $userId]);
-                            $dbTrans->query("INSERT INTO transactions (sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response, date) VALUES (?, ?, 'ELECTRICITY', ?, ?, 0, ?, ?, ?, NOW())", [$userId, $transRef, $serviceDesc, $amount, $oldBalance, $newBalance, $apiResponseLog]);
-                            $transactionId = $dbTrans->lastInsertId();
+                if (($svcResult['status'] ?? '') === 'success') {
+                    // Ensure user still has sufficient funds before debiting
+                    if ($oldBalance < $amount) {
+                        // Insert failed transaction due to insufficient balance at commit time
+                        $dbTrans->query("INSERT INTO transactions (sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response, date) VALUES (?, ?, 'ELECTRICITY', ?, ?, 1, ?, ?, ?, NOW())", [$userId, $transRef, $serviceDesc, $amount, $oldBalance, $oldBalance, $apiResponseLog]);
+                        $transactionId = $dbTrans->lastInsertId();
+                        $transRef = $transRef . '-' . $transactionId;
+                        $dbTrans->query("UPDATE transactions SET transref = ? WHERE tId = ?", [$transRef, $transactionId]);
+                        $conn->commit();
+                    } else {
+                        // Debit wallet and record success transaction
+                        $newBalance = $oldBalance - $amount;
+                        $dbTrans->query("UPDATE subscribers SET sWallet = sWallet - ? WHERE sId = ?", [$amount, $userId]);
+                        $dbTrans->query("INSERT INTO transactions (sId, transref, servicename, servicedesc, amount, status, oldbal, newbal, api_response, date) VALUES (?, ?, 'ELECTRICITY', ?, ?, 0, ?, ?, ?, NOW())", [$userId, $transRef, $serviceDesc, $amount, $oldBalance, $newBalance, $apiResponseLog]);
+                        $transactionId = $dbTrans->lastInsertId();
                             $transRef = $transRef . '-' . $transactionId;
                             $dbTrans->query("UPDATE transactions SET transref = ? WHERE tId = ?", [$transRef, $transactionId]);
                             $conn->commit();
@@ -601,7 +632,6 @@ try {
                     }
                     error_log('Error updating/creating transaction after provider call: ' . $e->getMessage());
                 }
-            }
 
             // Send push notification for all attempts (success and failure)
             try {
@@ -799,15 +829,19 @@ try {
                 throw new Exception('Method not allowed');
             }
 
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             $data = json_decode(file_get_contents("php://input"));
             error_log("Exam purchase request data: " . print_r($data, true));
 
-            if (!isset($data->examId) || !isset($data->quantity) || !isset($data->userId) || !isset($data->pin)) {
-                throw new Exception('Missing required parameters: examId, quantity, userId, pin');
+            if (!isset($data->examId) || !isset($data->quantity) || !isset($data->pin)) {
+                throw new Exception('Missing required parameters: examId, quantity, pin');
             }
 
             $service = new ExamPinService();
-            $result = $service->purchaseExamPin($data->examId, $data->quantity, $data->userId);
+            // Use authenticated user ID from session, not client-supplied userId
+            $result = $service->purchaseExamPin($data->examId, $data->quantity, $authenticatedUserId);
 
             $response['status'] = $result['status'];
             $response['message'] = $result['message'];
@@ -816,7 +850,7 @@ try {
             // Send notification for transaction attempts (success or error)
             try {
                 sendTransactionNotification(
-                    userId: (string)$data->userId,
+                    userId: (string)$authenticatedUserId,
                     transactionType: 'exam_pin',
                     transactionData: [
                         'examId' => $data->examId,
@@ -836,15 +870,19 @@ try {
                 throw new Exception('Method not allowed');
             }
 
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             $data = json_decode(file_get_contents("php://input"));
             error_log("Card PIN purchase request data: " . print_r($data, true));
 
-            if (!isset($data->planId) || !isset($data->quantity) || !isset($data->userId) || !isset($data->pin)) {
-                throw new Exception('Missing required parameters: planId, quantity, userId, pin');
+            if (!isset($data->planId) || !isset($data->quantity) || !isset($data->pin)) {
+                throw new Exception('Missing required parameters: planId, quantity, pin');
             }
 
             $service = new RechargePinService();
-            $result = $service->purchaseRechargePin($data->planId, $data->quantity, $data->userId, $data->pin);
+            // Use authenticated user ID from session, not client-supplied userId
+            $result = $service->purchaseRechargePin($data->planId, $data->quantity, $authenticatedUserId, $data->pin);
 
             $response['status'] = $result['status'];
             $response['message'] = $result['message'];
@@ -853,7 +891,7 @@ try {
             // Send notification for transaction attempts (success or error)
             try {
                 sendTransactionNotification(
-                    userId: (string)$data->userId,
+                    userId: (string)$authenticatedUserId,
                     transactionType: 'card_pin',
                     transactionData: [
                         'network' => $data->planId,
@@ -910,25 +948,29 @@ try {
                 break;
             }
 
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             $data = json_decode(file_get_contents("php://input"));
             error_log("Data pin purchase request data: " . print_r($data, true));
 
             // Validate required parameters
-            if (!isset($data->plan) || !isset($data->quantity) || !isset($data->name_on_card) || !isset($data->userId)) {
+            if (!isset($data->plan) || !isset($data->quantity) || !isset($data->name_on_card)) {
                 error_log("Missing required parameters. Received: " . json_encode($data));
                 http_response_code(400);
                 $response['status'] = 'error';
-                $response['message'] = 'Missing required parameters. Required: plan, quantity, name_on_card, userId';
+                $response['message'] = 'Missing required parameters. Required: plan, quantity, name_on_card';
                 break;
             }
 
             try {
                 $service = new DataPinService();
+                // Use authenticated user ID from session, not client-supplied userId
                 $result = $service->purchaseDataPin(
                     $data->plan,
                     $data->quantity,
                     $data->name_on_card,
-                    $data->userId
+                    $authenticatedUserId
                 );
 
                 $response['status'] = $result['status'];
@@ -938,7 +980,7 @@ try {
                 // Send notification for transaction attempts (success or error)
                 try {
                     sendTransactionNotification(
-                        userId: (string)$data->userId,
+                        userId: (string)$authenticatedUserId,
                         transactionType: 'data_pin',
                         transactionData: [
                             'planName' => $data->plan,
@@ -1109,7 +1151,7 @@ try {
                     }
                 }
                 if (empty($aspKey)) {
-                    throw new Exception('Aspfiy API key not configured (apiconfigs.name=\'asfiyApi\')');
+                    throw new Exception('Aspfiy API key not configured in environment');
                 }
 
                 // Helper: perform POST to Aspfiy reserve endpoints
@@ -1366,291 +1408,135 @@ try {
                         'Authorization: Bearer ' . $aspKey,
                         'Content-Length: ' . strlen($body)
                     ]);
-                    curl_setopt($ch, CURLOPT_POST, true);
-                    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-                    curl_setopt($ch, CURLOPT_TIMEOUT, 20);
-                    $resp = curl_exec($ch);
-                    $err = curl_error($ch);
-                    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                    curl_close($ch);
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+                $resp = curl_exec($ch);
+                $err = curl_error($ch);
+                $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
 
-                    if ($err) {
-                        throw new Exception('HTTP request error: ' . $err);
+                if ($err) {
+                    throw new Exception('HTTP request error: ' . $err);
+                }
+
+                $decoded = json_decode($resp, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    throw new Exception('Invalid JSON from Aspfiy: ' . json_last_error_msg());
+                }
+
+                return ['code' => $code, 'body' => $decoded];
+            };
+
+            $referenceBase = 'PAGA-' . $data->user_id . '-' . time();
+            $webhookUrl = !empty($webhookUrl) ? $webhookUrl : null;
+
+            $firstName = $user['sFname'] ?? '';
+            $lastName = $user['sLname'] ?? '';
+            $phone = $user['sPhone'] ?? '';
+
+            // Reserve Paga
+            $pagaPayload = [
+                'reference' => $referenceBase . '-PAGA',
+                'firstName' => $firstName,
+                'lastName' => $lastName,
+                'phone' => $phone,
+                'email' => $user['sEmail'] ?? '',
+            ];
+            if (!empty($webhookUrl)) $pagaPayload['webhookUrl'] = $webhookUrl;
+
+            error_log('Calling Aspfiy reserve-paga with payload: ' . json_encode($pagaPayload));
+            $pagaResp = $callAspfiy('reserve-paga/', $pagaPayload);
+
+            $pagaAcct = '';
+            $pagaAcctName = '';
+            $pagaBankName = '';
+
+            if ($pagaResp['code'] >= 200 && $pagaResp['code'] < 300) {
+                $body = $pagaResp['body'];
+                $pagaOk = (!empty($body['data'])) || (!empty($body['status']) && (strtolower((string)$body['status']) === 'success' || $body['status'] === true || $body['status'] === 'true'));
+                if ($pagaOk && !empty($body['data']) && is_array($body['data'])) {
+                    $d = $body['data'];
+                    // Aspfiy may return account_number/account_name/bank_name
+                    $pagaAcct = $d['account_number'] ?? $d['account'] ?? $d['accountNo'] ?? $d['reference'] ?? '';
+                    $pagaAcctName = $d['account_name'] ?? $d['name'] ?? '';
+                    $pagaBankName = $d['bank_name'] ?? $d['bank'] ?? '';
+                    // If the extracted value is itself an array/object, try to normalize
+                    if (is_array($pagaAcct) || is_object($pagaAcct)) {
+                        $cand = (array)$pagaAcct;
+                        $pagaAcct = $cand['account_number'] ?? $cand['accountNo'] ?? $cand['account'] ?? $cand['reference'] ?? '';
+                        // Also try to pull name/bank from nested structure if empty
+                        if (empty($pagaAcctName)) $pagaAcctName = $cand['account_name'] ?? $cand['name'] ?? '';
+                        if (empty($pagaBankName)) $pagaBankName = $cand['bank_name'] ?? $cand['bank'] ?? '';
                     }
-
-                    $decoded = json_decode($resp, true);
-                    if (json_last_error() !== JSON_ERROR_NONE) {
-                        throw new Exception('Invalid JSON from Aspfiy: ' . json_last_error_msg());
-                    }
-
-                    return ['code' => $code, 'body' => $decoded];
-                };
-
-                $referenceBase = 'PAGA-' . $data->user_id . '-' . time();
-                $webhookUrl = !empty($webhookUrl) ? $webhookUrl : null;
-
-                $firstName = $user['sFname'] ?? '';
-                $lastName = $user['sLname'] ?? '';
-                $phone = $user['sPhone'] ?? '';
-
-                // Reserve Paga
-                $pagaPayload = [
-                    'reference' => $referenceBase . '-PAGA',
-                    'firstName' => $firstName,
-                    'lastName' => $lastName,
-                    'phone' => $phone,
-                    'email' => $user['sEmail'] ?? '',
-                ];
-                if (!empty($webhookUrl)) $pagaPayload['webhookUrl'] = $webhookUrl;
-
-                error_log('Calling Aspfiy reserve-paga with payload: ' . json_encode($pagaPayload));
-                $pagaResp = $callAspfiy('reserve-paga/', $pagaPayload);
-
-                $pagaAcct = '';
-                $pagaAcctName = '';
-                $pagaBankName = '';
-
-                if ($pagaResp['code'] >= 200 && $pagaResp['code'] < 300) {
-                    $body = $pagaResp['body'];
-                    $pagaOk = (!empty($body['data'])) || (!empty($body['status']) && (strtolower((string)$body['status']) === 'success' || $body['status'] === true || $body['status'] === 'true'));
-                    if ($pagaOk && !empty($body['data']) && is_array($body['data'])) {
-                        $d = $body['data'];
-                        $pagaAcct = $d['account_number'] ?? $d['account'] ?? $d['accountNo'] ?? $d['reference'] ?? '';
-                        $pagaAcctName = $d['account_name'] ?? $d['name'] ?? '';
-                        $pagaBankName = $d['bank_name'] ?? $d['bank'] ?? '';
-                        if (is_array($pagaAcct) || is_object($pagaAcct)) {
-                            $cand = (array)$pagaAcct;
-                            $pagaAcct = $cand['account_number'] ?? $cand['accountNo'] ?? $cand['account'] ?? $cand['reference'] ?? '';
-                            if (empty($pagaAcctName)) $pagaAcctName = $cand['account_name'] ?? $cand['name'] ?? '';
-                            if (empty($pagaBankName)) $pagaBankName = $cand['bank_name'] ?? $cand['bank'] ?? '';
-                        }
-                        if (!empty($pagaAcct)) {
-                            error_log('Aspfiy reserve-paga created account: ' . $pagaAcct);
-                        } else {
-                            error_log('Aspfiy reserve-paga response (no account number): ' . print_r($pagaResp, true));
-                        }
+                    if (!empty($pagaAcct)) {
+                        error_log('Aspfiy reserve-paga created account: ' . $pagaAcct);
                     } else {
-                        error_log('Aspfiy reserve-paga response (no account): ' . print_r($pagaResp, true));
+                        error_log('Aspfiy reserve-paga response (no account number): ' . print_r($pagaResp, true));
                     }
                 } else {
-                    error_log('Aspfiy reserve-paga failed (http): ' . print_r($pagaResp, true));
+                    // Not a success or no account returned
+                    error_log('Aspfiy reserve-paga response (no account): ' . print_r($pagaResp, true));
                 }
-
-                $pagaAcct = is_null($pagaAcct) ? '' : trim((string)$pagaAcct);
-
-                if (!empty($pagaAcct)) {
-                    $updateQuery = 'UPDATE subscribers SET sAsfiyBank = ?, sBankName = ? WHERE sId = ?';
-                    $db->query($updateQuery, [$pagaAcct, 'application', $data->user_id]);
-
-                    $response['status'] = 'success';
-                    $response['message'] = 'Paga account generated/updated';
-                    $response['data'] = [
-                        'paga_account' => $pagaAcct,
-                        'paga_account_name' => $pagaAcctName,
-                        'paga_bank_name' => $pagaBankName,
-                    ];
-                    http_response_code(200);
-                } else {
-                    $response['status'] = 'error';
-                    $response['message'] = 'Failed to reserve Paga account. See server logs.';
-                    http_response_code(502);
-                }
-            } catch (PDOException $e) {
-                error_log('Database error in generate-paga-only: ' . $e->getMessage());
-                http_response_code(503);
-                $response['status'] = 'error';
-                $response['message'] = 'Database service is currently unavailable.';
-            } catch (Exception $e) {
-                error_log('Error in generate-paga-only: ' . $e->getMessage());
-                http_response_code(500);
-                $response['status'] = 'error';
-                $response['message'] = $e->getMessage();
-            }
-            break;
-
-        case 'generate-palmpay-only':
-            // Generate Palmpay account only and save to sPaga
-            if ($requestMethod !== 'POST') {
-                http_response_code(405);
-                $response['message'] = 'Method not allowed';
-                break;
+            } else {
+                error_log('Aspfiy reserve-paga failed (http): ' . print_r($pagaResp, true));
             }
 
-            $data = json_decode(file_get_contents("php://input"));
-            if (!isset($data->user_id)) {
-                http_response_code(400);
-                $response['message'] = 'Missing required parameter: user_id';
-                break;
-            }
+            // Update subscribers table when we have values
+            // Normalize account values as plain strings
+            $pagaAcct = is_null($pagaAcct) ? '' : trim((string)$pagaAcct);
 
-            try {
-                $db = new Database();
+            if (!empty($pagaAcct)) {
+                $updateQuery = 'UPDATE subscribers SET sAsfiyBank = ?, sBankName = ? WHERE sId = ?';
+                $db->query($updateQuery, [$pagaAcct, 'application', $data->user_id]);
 
-                // Ensure user exists
-                $query = "SELECT sFname, sLname, sPhone, sEmail, sPaga FROM subscribers WHERE sId = ?";
-                $rows = $db->query($query, [$data->user_id]);
-                if (empty($rows)) {
-                    throw new Exception('User not found');
-                }
-
-                $user = $rows[0];
-                $palmpay = $user['sPaga'] ?? '';
-
-                // If we already have Palmpay account, return it immediately
-                if (!empty($palmpay)) {
-                    $response['status'] = 'success';
-                    $response['message'] = 'Palmpay account fetched';
-                    $response['data'] = [
-                        'palmpay_account' => $palmpay,
-                    ];
-                    http_response_code(200);
-                    break;
-                }
-
-                // Fetch Aspfiy API key and webhook from apiconfigs
-                $cfg = $db->query("SELECT name, value FROM apiconfigs WHERE name IN (?, ?)", ['asfiyApi', 'asfiyWebhook']);
-                $aspKey = '';
-                $webhookUrl = '';
-                if (!empty($cfg)) {
-                    foreach ($cfg as $c) {
-                        if ($c['name'] === 'asfiyApi') $aspKey = $c['value'];
-                        if ($c['name'] === 'asfiyWebhook') $webhookUrl = $c['value'];
-                    }
-                }
-                if (empty($aspKey)) {
-                    throw new Exception('Aspfiy API key not configured');
-                }
-
-                // Helper: perform POST to Aspfiy reserve endpoints
-                $callAspfiy = function($endpoint, $payload) use ($aspKey) {
-                    $url = rtrim('https://api-v1.aspfiy.com', '/') . '/' . ltrim($endpoint, '/');
-                    $ch = curl_init($url);
-                    $body = json_encode($payload);
-                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                        'Content-Type: application/json',
-                        'Authorization: Bearer ' . $aspKey,
-                        'Content-Length: ' . strlen($body)
-                    ]);
-                    curl_setopt($ch, CURLOPT_POST, true);
-                    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-                    curl_setopt($ch, CURLOPT_TIMEOUT, 20);
-                    $resp = curl_exec($ch);
-                    $err = curl_error($ch);
-                    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                    curl_close($ch);
-
-                    if ($err) {
-                        throw new Exception('HTTP request error: ' . $err);
-                    }
-
-                    $decoded = json_decode($resp, true);
-                    if (json_last_error() !== JSON_ERROR_NONE) {
-                        throw new Exception('Invalid JSON from Aspfiy: ' . json_last_error_msg());
-                    }
-
-                    return ['code' => $code, 'body' => $decoded];
-                };
-
-                $referenceBase = 'PALMPAY-' . $data->user_id . '-' . time();
-                $webhookUrl = !empty($webhookUrl) ? $webhookUrl : null;
-
-                $firstName = $user['sFname'] ?? '';
-                $lastName = $user['sLname'] ?? '';
-                $phone = $user['sPhone'] ?? '';
-
-                // Reserve Palmpay
-                $palmpayPayload = [
-                    'reference' => $referenceBase . '-PALMPAY',
-                    'firstName' => $firstName,
-                    'lastName' => $lastName,
-                    'phone' => $phone,
-                    'email' => $user['sEmail'] ?? '',
+                $response['status'] = 'success';
+                $response['message'] = 'Paga account generated/updated';
+                $response['data'] = [
+                    'paga_account' => $pagaAcct,
+                    'paga_account_name' => $pagaAcctName,
+                    'paga_bank_name' => $pagaBankName,
                 ];
-                if (!empty($webhookUrl)) $palmpayPayload['webhookUrl'] = $webhookUrl;
-
-                error_log('Calling Aspfiy reserve-palmpay with payload: ' . json_encode($palmpayPayload));
-                $palmpayResp = $callAspfiy('reserve-palmpay/', $palmpayPayload);
-
-                $palmpayAcct = '';
-                $palmpayAcctName = '';
-                $palmpayBankName = '';
-
-                if ($palmpayResp['code'] >= 200 && $palmpayResp['code'] < 300) {
-                    $body = $palmpayResp['body'];
-                    $palmOk = (!empty($body['data'])) || (!empty($body['status']) && (strtolower((string)$body['status']) === 'success' || $body['status'] === true || $body['status'] === 'true'));
-                    if ($palmOk && !empty($body['data']) && is_array($body['data'])) {
-                        $d = $body['data'];
-                        $palmpayAcct = $d['account_number'] ?? $d['account'] ?? $d['accountNo'] ?? $d['reference'] ?? '';
-                        $palmpayAcctName = $d['account_name'] ?? $d['name'] ?? '';
-                        $palmpayBankName = $d['bank_name'] ?? $d['bank'] ?? '';
-                        if (is_array($palmpayAcct) || is_object($palmpayAcct)) {
-                            $cand = (array)$palmpayAcct;
-                            $palmpayAcct = $cand['account_number'] ?? $cand['accountNo'] ?? $cand['account'] ?? $cand['reference'] ?? '';
-                            if (empty($palmpayAcctName)) $palmpayAcctName = $cand['account_name'] ?? $cand['name'] ?? '';
-                            if (empty($palmpayBankName)) $palmpayBankName = $cand['bank_name'] ?? $cand['bank'] ?? '';
-                        }
-                        if (!empty($palmpayAcct)) {
-                            error_log('Aspfiy reserve-palmpay created account: ' . $palmpayAcct);
-                        } else {
-                            error_log('Aspfiy reserve-palmpay response (no account number): ' . print_r($palmpayResp, true));
-                        }
-                    } else {
-                        error_log('Aspfiy reserve-palmpay response (no account): ' . print_r($palmpayResp, true));
-                    }
-                } else {
-                    error_log('Aspfiy reserve-palmpay failed (http): ' . print_r($palmpayResp, true));
-                }
-
-                $palmpayAcct = is_null($palmpayAcct) ? '' : trim((string)$palmpayAcct);
-
-                if (!empty($palmpayAcct)) {
-                    $updateQuery = 'UPDATE subscribers SET sPaga = ?, sBankName = ? WHERE sId = ?';
-                    $db->query($updateQuery, [$palmpayAcct, 'application', $data->user_id]);
-
-                    $response['status'] = 'success';
-                    $response['message'] = 'Palmpay account generated/updated';
-                    $response['data'] = [
-                        'palmpay_account' => $palmpayAcct,
-                        'palmpay_account_name' => $palmpayAcctName,
-                        'palmpay_bank_name' => $palmpayBankName,
-                    ];
-                    http_response_code(200);
-                } else {
-                    $response['status'] = 'error';
-                    $response['message'] = 'Failed to reserve Palmpay account. See server logs.';
-                    http_response_code(502);
-                }
-            } catch (PDOException $e) {
-                error_log('Database error in generate-palmpay-only: ' . $e->getMessage());
-                http_response_code(503);
+                http_response_code(200);
+            } else {
                 $response['status'] = 'error';
-                $response['message'] = 'Database service is currently unavailable.';
-            } catch (Exception $e) {
-                error_log('Error in generate-palmpay-only: ' . $e->getMessage());
-                http_response_code(500);
-                $response['status'] = 'error';
-                $response['message'] = $e->getMessage();
+                $response['message'] = 'Failed to reserve Paga account. See server logs.';
+                http_response_code(502);
             }
-            break;
+        } catch (PDOException $e) {
+            error_log('Database error in generate-paga-only: ' . $e->getMessage());
+            http_response_code(503);
+            $response['status'] = 'error';
+            $response['message'] = 'Database service is currently unavailable.';
+        } catch (Exception $e) {
+            error_log('Error in generate-paga-only: ' . $e->getMessage());
+            http_response_code(500);
+            $response['status'] = 'error';
+            $response['message'] = $e->getMessage();
+        }
+        break;
 
         case 'update-pin':
             if ($requestMethod !== 'POST') {
                 throw new Exception('Method not allowed');
             }
 
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             $data = json_decode(file_get_contents("php://input"));
             if (json_last_error() !== JSON_ERROR_NONE) {
                 throw new Exception('Invalid JSON: ' . json_last_error_msg());
             }
 
-            if (!isset($data->user_id) || !isset($data->pin)) {
-                throw new Exception('Missing required parameters: user_id, pin');
+            if (!isset($data->pin)) {
+                throw new Exception('Missing required parameter: pin');
             }
 
             try {
                 $userService = new UserService();
-                $updated = $userService->updatePin($data->user_id, $data->pin);
+                // Use session user ID, not client-supplied user_id
+                $updated = $userService->updatePin($authenticatedUserId, $data->pin);
                 if ($updated) {
                     $response['status'] = 'success';
                     $response['message'] = 'PIN updated successfully';
@@ -1660,7 +1546,7 @@ try {
                     // Send PIN change notification
                     try {
                         sendTransactionNotification(
-                            userId: (string)$data->user_id,
+                            userId: (string)$authenticatedUserId,
                             transactionType: 'pin_changed',
                             transactionData: []
                         );
@@ -1682,10 +1568,8 @@ try {
             break;
 
         case 'transactions':
-            $userId = isset($_GET['user_id']) ? $_GET['user_id'] : null;
-            if (!$userId) {
-                throw new Exception('User ID is required');
-            }
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
 
         // Select fields that actually exist in the `transactions` table and include oldbal/newbal
         $query = "SELECT tId, sId, transref, servicename, servicedesc, amount, status, 
@@ -1695,7 +1579,7 @@ try {
               WHERE sId = ?
               ORDER BY date DESC";
             $db = new Database();
-            $transactions = $db->query($query, [$userId]);
+            $transactions = $db->query($query, [$authenticatedUserId]);
 
             // Map oldbal/newbal to string values to send to client (keep null if not present)
             // Also extract token from api_response for display
@@ -1775,14 +1659,13 @@ try {
             break;
 
         case 'beneficiaries':
-            // GET /api/beneficiaries?user_id=123
-            $userId = isset($_GET['user_id']) ? $_GET['user_id'] : null;
-            if (!$userId) {
-                throw new Exception('Missing user_id parameter');
-            }
+            // GET beneficiaries for authenticated user
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             try {
                 $svc = new BeneficiaryService();
-                $rows = $svc->listByUser($userId);
+                $rows = $svc->listByUser($authenticatedUserId);
                 $response['data'] = $rows;
                 $response['status'] = 'success';
                 $response['message'] = 'Beneficiaries fetched successfully';
@@ -1795,32 +1678,44 @@ try {
         case 'beneficiary':
             // POST to create, PUT to update, DELETE to remove
             if ($requestMethod === 'POST') {
+                // Get authenticated user ID from session
+                $authenticatedUserId = requireAuth();
+
                 $data = json_decode(file_get_contents('php://input'));
-                if (!isset($data->user_id) || !isset($data->name) || !isset($data->phone)) {
+                if (!isset($data->name) || !isset($data->phone)) {
                     throw new Exception('Missing required parameters');
                 }
                 $svc = new BeneficiaryService();
-                $insertId = $svc->create($data->user_id, $data->name, $data->phone);
+                // Use authenticated user ID, not client-supplied user_id
+                $insertId = $svc->create($authenticatedUserId, $data->name, $data->phone);
                 $response['status'] = 'success';
                 $response['message'] = 'Beneficiary added';
                 $response['data'] = ['id' => $insertId];
             } else if ($requestMethod === 'PUT') {
+                // Get authenticated user ID from session
+                $authenticatedUserId = requireAuth();
+
                 $data = json_decode(file_get_contents('php://input'));
-                if (!isset($data->id) || !isset($data->user_id) || !isset($data->name) || !isset($data->phone)) {
+                if (!isset($data->id) || !isset($data->name) || !isset($data->phone)) {
                     throw new Exception('Missing required parameters');
                 }
                 $svc = new BeneficiaryService();
-                $ok = $svc->update($data->id, $data->user_id, $data->name, $data->phone);
+                // Use authenticated user ID, not client-supplied user_id
+                $ok = $svc->update($data->id, $authenticatedUserId, $data->name, $data->phone);
                 $response['status'] = $ok ? 'success' : 'failed';
                 $response['message'] = $ok ? 'Beneficiary updated' : 'Update failed';
             } else if ($requestMethod === 'DELETE') {
-                // Expect JSON body { id: ..., user_id: ... }
+                // Get authenticated user ID from session
+                $authenticatedUserId = requireAuth();
+
+                // Expect JSON body { id: ... }
                 $data = json_decode(file_get_contents('php://input'));
-                if (!isset($data->id) || !isset($data->user_id)) {
-                    throw new Exception('Missing required parameters');
+                if (!isset($data->id)) {
+                    throw new Exception('Missing required parameter: id');
                 }
                 $svc = new BeneficiaryService();
-                $ok = $svc->delete($data->id, $data->user_id);
+                // Use authenticated user ID, not client-supplied user_id
+                $ok = $svc->delete($data->id, $authenticatedUserId);
                 $response['status'] = $ok ? 'success' : 'failed';
                 $response['message'] = $ok ? 'Beneficiary deleted' : 'Delete failed';
             } else {
@@ -1829,27 +1724,22 @@ try {
             break;
 
         case 'manual-payments':
-            // Fetch manual payment records. Optional query param: user_id
+            // Fetch manual payment records for authenticated user
             if ($requestMethod !== 'GET') {
                 http_response_code(405);
                 throw new Exception('Method not allowed');
             }
 
-            // Optional filter by user id (accept user_id or userId)
-            $userId = isset($_GET['user_id']) ? $_GET['user_id'] : (isset($_GET['userId']) ? $_GET['userId'] : null);
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
 
             require_once __DIR__ . '/../config/database.php';
 
             try {
                 $db = new Database();
 
-                if ($userId) {
-                    $query = "SELECT * FROM manualfunds WHERE sId = ? ORDER BY dPosted DESC";
-                    $payments = $db->query($query, [$userId]);
-                } else {
-                    $query = "SELECT * FROM manualfunds ORDER BY dPosted DESC";
-                    $payments = $db->query($query);
-                }
+                $query = "SELECT * FROM manualfunds WHERE sId = ? ORDER BY dPosted DESC";
+                $payments = $db->query($query, [$authenticatedUserId]);
 
                 $response['data'] = $payments;
                 $response['status'] = 'success';
@@ -1947,18 +1837,23 @@ try {
             try {
                 $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
 
-                // SMTP settings (reusing existing project settings)
+                // SMTP settings from environment
                 $mail->isSMTP();
-                $mail->Host = 'mail.mkdata.com';
+                $mail->Host = getenv('MAIL_HOST') ?: 'mail.mkdata.com';
                 $mail->SMTPAuth = true;
-                $mail->Username = 'no-reply@mkdata.com';
-                $mail->Password = ']xG28YL,APm-+xbx';
+                $mail->Username = getenv('MAIL_USERNAME') ?: 'no-reply@mkdata.com';
+                $mail->Password = getenv('MAIL_PASSWORD');
+                
+                // Verify password is set
+                if (!$mail->Password) {
+                    throw new Exception('MAIL_PASSWORD not configured in environment');
+                }
 
                 // Use STARTTLS for port 587
                 $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
                 $mail->Port = 587;
 
-                $mail->setFrom('no-reply@mkdata.com', 'Binali One Data');
+                $mail->setFrom(getenv('MAIL_USERNAME') ?: 'no-reply@mkdata.com', getenv('MAIL_FROM_NAME') ?: 'MK Data');
                 $mail->addAddress('Muhammadbinali1234@gmail.com');
 
                 $mail->isHTML(true);
@@ -2028,10 +1923,8 @@ try {
             break;
 
         case 'account-details':
-            $subscriberId = isset($_GET['id']) ? $_GET['id'] : null;
-            if (!$subscriberId) {
-                throw new Exception('Subscriber ID is required');
-            }
+            // Get authenticated user ID from session (ignore any client-supplied id)
+            $subscriberId = requireAuth();
 
             $query = "SELECT sId, sFname, sLname, sEmail, sPhone, sType, sWallet, sRefWallet,
                 sBankNo, sSterlingBank, sBankName, sRolexBank, sFidelityBank, sAsfiyBank,
@@ -2129,13 +2022,12 @@ try {
                 throw new Exception('Method not allowed');
             }
 
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             $data = json_decode(file_get_contents("php://input"));
             
             // Validate required fields
-            if (!isset($data->user_id)) {
-                throw new Exception('Missing required parameter: user_id');
-            }
-
             if (!isset($data->fname) && !isset($data->lname) && !isset($data->new_password)) {
                 throw new Exception('At least one field (fname, lname, or new_password) must be provided');
             }
@@ -2168,7 +2060,7 @@ try {
 
                     // Get current password hash from database
                     $db = new Database();
-                    $result = $db->query('SELECT sPass FROM subscribers WHERE sId = ? LIMIT 1', [$data->user_id]);
+                    $result = $db->query('SELECT sPass FROM subscribers WHERE sId = ? LIMIT 1', [$authenticatedUserId]);
                     
                     if (empty($result)) {
                         throw new Exception('User not found');
@@ -2192,7 +2084,7 @@ try {
                 }
 
                 // Add user_id to params for WHERE clause
-                $params[] = $data->user_id;
+                $params[] = $authenticatedUserId;
 
                 // Build and execute update query
                 $updateQuery = 'UPDATE subscribers SET ' . implode(', ', $updates) . ' WHERE sId = ?';
@@ -2202,7 +2094,7 @@ try {
 
                 if ($stmt->rowCount() > 0) {
                     // Fetch updated user data
-                    $result = $db->query('SELECT sId, sFname, sLname, sEmail, sPhone FROM subscribers WHERE sId = ? LIMIT 1', [$data->user_id]);
+                    $result = $db->query('SELECT sId, sFname, sLname, sEmail, sPhone FROM subscribers WHERE sId = ? LIMIT 1', [$authenticatedUserId]);
                     
                     if (!empty($result)) {
                         $response['status'] = 'success';
@@ -2218,7 +2110,7 @@ try {
                         // Send profile_updated notification
                         try {
                             sendTransactionNotification(
-                                userId: (string)$data->user_id,
+                                userId: (string)$authenticatedUserId,
                                 transactionType: 'profile_updated',
                                 transactionData: []
                             );
@@ -2816,7 +2708,7 @@ try {
                 }
 
                 $db = new Database();
-                $query = "SELECT sw.id, sw.user_id, sw.reward_id, sw.reward_type, sw.amount, sw.unit, sw.plan_id,
+                $query = "SELECT sw.id, sw.user_id, sw.reward_id, sw.reward_type, sw.amount, sw.unit, sw.plan_id, 
                          sw.status, sw.meta, sw.spin_at, sw.delivered_at
                          FROM spin_wins sw
                          WHERE sw.user_id = ?
@@ -3353,9 +3245,12 @@ try {
                 throw new Exception('Method not allowed');
             }
 
+            // Get authenticated user ID from session
+            $authenticatedUserId = requireAuth();
+
             $data = json_decode(file_get_contents("php://input"), true);
             
-            $required = ['user_id', 'network', 'sender_phone', 'airtime_amount', 'cash_amount'];
+            $required = ['network', 'sender_phone', 'airtime_amount', 'cash_amount'];
             foreach ($required as $field) {
                 if (!isset($data[$field])) {
                     throw new Exception("Missing required field: $field");
@@ -3387,14 +3282,14 @@ try {
                 }
 
                 // Generate reference
-                $reference = 'A2C-' . time() . '-' . $data['user_id'];
+                $reference = 'A2C-' . time() . '-' . $authenticatedUserId;
 
                 // Insert request
                 $db->query(
                     "INSERT INTO a2c_requests (user_id, network, sender_phone, airtime_amount, cash_amount, reference, status) 
                      VALUES (?, ?, ?, ?, ?, ?, 'pending')",
                     [
-                        $data['user_id'],
+                        $authenticatedUserId,
                         $data['network'],
                         $data['sender_phone'],
                         $data['airtime_amount'],
@@ -3422,17 +3317,14 @@ try {
         case 'a2c-requests':
             // Get pending requests for current user
             try {
-                $userId = isset($_GET['user_id']) ? $_GET['user_id'] : null;
-                
-                if (!$userId) {
-                    throw new Exception('user_id is required');
-                }
+                // Get authenticated user ID from session
+                $authenticatedUserId = requireAuth();
 
                 $db = new Database();
                 $requests = $db->query(
                     "SELECT id, network, sender_phone, airtime_amount, cash_amount, status, reference, created_at 
                      FROM a2c_requests WHERE user_id = ? ORDER BY created_at DESC",
-                    [$userId]
+                    [$authenticatedUserId]
                 );
 
                 $response['status'] = 'success';
@@ -3452,9 +3344,12 @@ try {
                 throw new Exception('Method not allowed');
             }
 
+            // Verify admin access
+            $adminId = requireAdmin();
+
             $data = json_decode(file_get_contents("php://input"), true);
             
-            $required = ['request_id', 'admin_id', 'approval_status'];
+            $required = ['request_id', 'approval_status'];
             foreach ($required as $field) {
                 if (!isset($data[$field])) {
                     throw new Exception("Missing required field: $field");
@@ -3879,11 +3774,31 @@ if (!isset($response) || !is_array($response)) {
 }
 
 // Add helpful debug info to response for quick diagnostics (temporary)
+$sessionId = function_exists('session_id') ? session_id() : null;
+$sessionSavePath = ini_get('session.save_path') ?: sys_get_temp_dir();
+$sessionFilePath = $sessionId ? rtrim($sessionSavePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'sess_' . $sessionId : null;
+$sessionFileExists = $sessionFilePath ? file_exists($sessionFilePath) : false;
+$sessionFileExcerpt = null;
+if ($sessionFileExists) {
+    $content = @file_get_contents($sessionFilePath);
+    if ($content !== false) {
+        $sessionFileExcerpt = substr($content, 0, 200);
+    }
+}
+
 $response['__debug'] = [
     'uri' => $uri ?? null,
     'endpoint' => $endpoint ?? null,
     'subEndpoint' => $subEndpoint ?? null,
     'method' => $requestMethod ?? null,
+    // Include incoming cookie and session data for debugging authentication issues
+    // 'incoming_cookies' => isset($_COOKIE) ? $_COOKIE : null,
+    // 'session_id' => $sessionId,
+    // 'session' => isset($_SESSION) ? $_SESSION : null,
+    // 'session_save_path' => $sessionSavePath,
+    // 'session_file' => $sessionFilePath,
+    // 'session_file_exists' => $sessionFileExists,
+    // 'session_file_excerpt' => $sessionFileExcerpt,
 ];
 
 error_log("Final response: " . json_encode($response));

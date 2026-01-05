@@ -47,8 +47,8 @@ class _PinSetupPageState extends State<PinSetupPage> {
 
     try {
       final api = ApiService();
-      // Determine user id from saved user_data or separate key
-      String? userId = prefs.getString('user_id');
+      // Determine user id from session
+      String? userId = await ApiService().getUserId();
 
       final res = await api.post('update-pin', {
         'user_id': userId,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
@@ -10,8 +11,38 @@ class ApiService {
   static const String _userIdKey = 'user_id';
   static const String _userKey = 'user_data';
 
-  final http.Client _client = http.Client();
+  final HttpClient _ioHttpClient = HttpClient();
+  late final http.Client _client;
+
+  ApiService() {
+    // Initialize the IO client using the pre-created HttpClient.
+    _client = IOClient(_ioHttpClient);
+
+    // Load any persisted cookie on service initialization so session persists
+    // across app restarts.
+    _prefs.then((p) {
+      final stored = p.getString('php_cookie');
+      if (stored != null && stored.isNotEmpty) {
+        _cookie = stored;
+        print('Loaded persisted cookie: $_cookie');
+      }
+    });
+  }
   final Future<SharedPreferences> _prefs = SharedPreferences.getInstance();
+
+  // Store cookie string (e.g. "PHPSESSID=...") when server sets it and attach
+  // to subsequent requests to maintain session-based authentication.
+  String? _cookie;
+
+  Map<String, String> _headers([Map<String, String>? extra]) {
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+    if (_cookie != null) headers['Cookie'] = _cookie!;
+    if (extra != null) headers.addAll(extra);
+    return headers;
+  }
 
   // Default timeout for API calls
   static const Duration _defaultTimeout = Duration(seconds: 15);
@@ -52,11 +83,60 @@ class ApiService {
       });
 
       // First login request
-      final response = await _client.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email, 'password': password}),
+      // Use dart:io HttpClient directly for the login call so we can capture
+      // the Set-Cookie response cookies reliably (some platform clients may
+      // not expose Set-Cookie via package:http Response.headers).
+      final ioReq = await _ioHttpClient.postUrl(Uri.parse(url));
+      ioReq.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+      ioReq.add(
+        utf8.encode(jsonEncode({'email': email, 'password': password})),
       );
+      final ioRes = await ioReq.close();
+      final loginBody = await utf8.decoder.bind(ioRes).join();
+
+      // DEBUG: Print raw response status and headers from ioRes
+      print('\n=== io.Res Status & Headers ===');
+      print('Status code: ${ioRes.statusCode}');
+      ioRes.headers.forEach((name, values) {
+        print('$name: ${values.join(', ')}');
+      });
+      print('Cookies parsed by ioRes.cookies: ${ioRes.cookies}');
+
+      // Capture cookies from the low-level response
+      if (ioRes.cookies.isNotEmpty) {
+        _cookie = ioRes.cookies.map((c) => '${c.name}=${c.value}').join('; ');
+        print('Saved cookie: $_cookie');
+        // Persist cookie so session survives app restarts
+        final prefs = await _prefs;
+        await prefs.setString('php_cookie', _cookie!);
+      }
+
+      // Convert headers to a Map<String,String> like package:http uses
+      final Map<String, String> respHeaders = {};
+      ioRes.headers.forEach((name, values) {
+        respHeaders[name.toLowerCase()] = values.join(',');
+      });
+
+      final response = http.Response(
+        loginBody,
+        ioRes.statusCode,
+        headers: respHeaders,
+      );
+
+      // Debug: Print all response headers
+      print('\n=== Login Response Headers ===');
+      print('All headers: ${response.headers}');
+      response.headers.forEach((key, value) {
+        print('$key: $value');
+      });
+
+      // Capture and persist session cookie if server sent one (e.g. PHPSESSID)
+      final sc = response.headers['set-cookie'];
+      if (sc != null) {
+        final cookie = sc.split(';').first; // keep only name=value
+        _cookie = cookie;
+        print('Saved cookie: $_cookie');
+      }
 
       var responseData = jsonDecode(response.body);
 
@@ -66,7 +146,7 @@ class ApiService {
         if (userId != null) {
           final userDetailsResponse = await _client.get(
             Uri.parse('$baseUrl/api/subscriber/$userId'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _headers(),
           );
 
           if (userDetailsResponse.statusCode == 200) {
@@ -163,13 +243,48 @@ class ApiService {
 
       if (userData != null) {
         final user = json.decode(userData);
-        final userId = user['sId']?.toString();
+
+        String? userId;
+
+        // Handle different possible shapes for saved user data
+        if (user is Map) {
+          // New format: sId
+          if (user.containsKey('sId') &&
+              user['sId'] != null &&
+              user['sId'].toString().isNotEmpty) {
+            userId = user['sId'].toString();
+          }
+          // Older format: id
+          else if (user.containsKey('id') &&
+              user['id'] != null &&
+              user['id'].toString().isNotEmpty) {
+            userId = user['id'].toString();
+          }
+          // Nested user object: {"user": {"id": ...}}
+          else if (user.containsKey('user') &&
+              user['user'] is Map &&
+              user['user']['id'] != null) {
+            userId = user['user']['id'].toString();
+          }
+          // Generic user_id key
+          else if (user.containsKey('user_id') && user['user_id'] != null) {
+            userId = user['user_id'].toString();
+          }
+        }
+
         print('Extracted user ID from user_data: $userId'); // Debug log
-        return userId;
-      } else if (directUserId != null) {
+
+        if (userId != null && userId.isNotEmpty) {
+          return userId;
+        }
+      }
+
+      // Fall back to direct stored user id
+      if (directUserId != null) {
         print('Using direct user ID: $directUserId'); // Debug log
         return directUserId;
       }
+
       print('No user ID found in any storage location'); // Debug log
       return null;
     } catch (e) {
@@ -182,7 +297,10 @@ class ApiService {
   Future<Map<String, dynamic>> getNetworkStatuses() async {
     try {
       final response = await _withTimeout(
-        http.get(Uri.parse('$baseUrl/api/network-status')),
+        _client.get(
+          Uri.parse('$baseUrl/api/network-status'),
+          headers: _headers(),
+        ),
       );
 
       if (response.statusCode == 200) {
@@ -278,10 +396,7 @@ class ApiService {
       final response = await _withTimeout(
         _client.post(
           Uri.parse(apiUrl),
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
+          headers: _headers(),
           body: jsonEncode(requestBody),
         ),
       );
@@ -358,14 +473,19 @@ class ApiService {
           ? '$baseUrl/$endpoint'
           : '$baseUrl/api/$endpoint';
       _printRequestDetails('GET', endpoint);
+      final prefsBeforeGet = await _prefs;
+      // Ensure in-memory cookie is populated from persisted storage if missing
+      if ((_cookie == null || _cookie!.isEmpty) &&
+          prefsBeforeGet.getString('php_cookie') != null) {
+        _cookie = prefsBeforeGet.getString('php_cookie');
+        print('Loaded cookie from prefs in get(): $_cookie');
+      }
+      print(
+        'Before GET - _cookie: $_cookie, prefs php_cookie: ${prefsBeforeGet.getString('php_cookie')}',
+      );
+      print('Outgoing GET headers: ${_headers()}');
       final response = await _withTimeout(
-        _client.get(
-          Uri.parse(url),
-          headers: {
-            'Content-Type': 'application/json',
-            // Add any other headers like authentication tokens here
-          },
-        ),
+        _client.get(Uri.parse(url), headers: _headers()),
       );
 
       return _handleResponse(response);
@@ -491,7 +611,7 @@ class ApiService {
       final response = await _withTimeout(
         _client.post(
           Uri.parse('$baseUrl/api/purchase-data'),
-          headers: {'Content-Type': 'application/json'},
+          headers: _headers(),
           body: json.encode({
             'network': network,
             'mobile_number': phone,
@@ -536,7 +656,7 @@ class ApiService {
       final response = await _withTimeout(
         _client.get(
           Uri.parse('$baseUrl/api/electricity-providers'),
-          headers: {'Content-Type': 'application/json'},
+          headers: _headers(),
         ),
       );
 
@@ -551,7 +671,7 @@ class ApiService {
       final response = await _withTimeout(
         _client.get(
           Uri.parse('$baseUrl/api/cable-providers'),
-          headers: {'Content-Type': 'application/json'},
+          headers: _headers(),
         ),
       );
 
@@ -569,10 +689,7 @@ class ApiService {
       }
 
       final response = await _withTimeout(
-        _client.get(
-          Uri.parse(url),
-          headers: {'Content-Type': 'application/json'},
-        ),
+        _client.get(Uri.parse(url), headers: _headers()),
       );
 
       return _handleResponse(response);
@@ -624,7 +741,7 @@ class ApiService {
       final response = await _withTimeout(
         _client.post(
           Uri.parse(url),
-          headers: {'Content-Type': 'application/json'},
+          headers: _headers(),
           body: jsonEncode(body),
         ),
       );
@@ -678,7 +795,7 @@ class ApiService {
       final response = await _withTimeout(
         _client.post(
           Uri.parse('$baseUrl/api/purchase-electricity'),
-          headers: {'Content-Type': 'application/json'},
+          headers: _headers(),
           body: jsonEncode({
             'meterNumber': meterNumber,
             'providerId': providerId,
@@ -735,7 +852,7 @@ class ApiService {
     try {
       final response = await _client.post(
         Uri.parse('$baseUrl/api/validate-meter'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers(),
         body: jsonEncode({
           'meterNumber': meterNumber,
           'providerId': providerId,
@@ -811,7 +928,7 @@ class ApiService {
     try {
       final response = await _client.post(
         Uri.parse('$baseUrl/api/validate-iuc'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers(),
         body: jsonEncode({'iucNumber': iucNumber, 'providerId': providerId}),
       );
 
@@ -837,7 +954,7 @@ class ApiService {
 
       final response = await _client.get(
         Uri.parse('$baseUrl/api/$endpoint'),
-        headers: {'Accept': 'application/json'},
+        headers: _headers(),
       );
 
       return _handleResponse(response);
@@ -875,10 +992,7 @@ class ApiService {
 
       final response = await _client.post(
         Uri.parse('$baseUrl/api/purchase-data-pin'),
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
+        headers: _headers(),
         body: jsonEncode({
           'plan': planId,
           'quantity': quantity,
@@ -1059,13 +1173,87 @@ class ApiService {
           ? '$baseUrl/$endpoint'
           : '$baseUrl/api/$endpoint';
       _printRequestDetails('POST', endpoint, body);
+      // Special-case login to use low-level HttpClient so Set-Cookie is
+      // captured reliably on all platforms (some package:http clients
+      // don't expose Set-Cookie headers). This preserves existing
+      // behavior for other auth endpoints while ensuring session cookie
+      // persistence after login.
+      // Match both 'auth/login' and 'auth/login.php' variants reliably.
+      print('post() called with endpoint: $endpoint');
+      final loginRegex = RegExp(r'^auth/login(\.php)?$');
+      print('loginRegex match: ${loginRegex.hasMatch(endpoint)}');
+      if (loginRegex.hasMatch(endpoint)) {
+        print('Using low-level HttpClient for auth login (cookie capture)');
+        // Use dart:io HttpClient to capture cookies
+        final ioReq = await _ioHttpClient.postUrl(Uri.parse(url));
+        ioReq.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+        ioReq.add(utf8.encode(jsonEncode(body)));
+        final ioRes = await ioReq.close();
+        final respBody = await utf8.decoder.bind(ioRes).join();
+
+        // Debug: Print raw response headers and cookies
+        print('\n=== io.Res Status & Headers (login) ===');
+        print('Status code: ${ioRes.statusCode}');
+        ioRes.headers.forEach((name, values) {
+          print('$name: ${values.join(', ')}');
+        });
+        print('Cookies parsed by ioRes.cookies: ${ioRes.cookies}');
+
+        // Capture cookies and persist
+        if (ioRes.cookies.isNotEmpty) {
+          _cookie = ioRes.cookies.map((c) => '${c.name}=${c.value}').join('; ');
+          print('Saved cookie: $_cookie');
+          final prefs = await _prefs;
+          await prefs.setString('php_cookie', _cookie!);
+          // Readback to verify persistence
+          final read = prefs.getString('php_cookie');
+          print('Persisted cookie readback after setString: $read');
+        } else {
+          print('ioRes.cookies was empty after login response');
+        }
+
+        // Convert headers to Map<String,String>
+        final Map<String, String> respHeaders = {};
+        ioRes.headers.forEach((name, values) {
+          respHeaders[name.toLowerCase()] = values.join(',');
+        });
+
+        final response = http.Response(
+          respBody,
+          ioRes.statusCode,
+          headers: respHeaders,
+        );
+
+        // Auth endpoints expect parsed JSON even on non-2xx responses
+        try {
+          final parsed = json.decode(response.body);
+          return parsed is Map<String, dynamic>
+              ? parsed
+              : {'message': parsed.toString()};
+        } catch (e) {
+          String msg = 'Request failed (status ${response.statusCode})';
+          try {
+            if (response.body.trim().isNotEmpty) msg = response.body.trim();
+          } catch (_) {}
+          return {'message': msg, 'statusCode': response.statusCode};
+        }
+      }
+
+      // Debug: show current cookie state and outgoing headers (including cookie if present)
+      final prefsBeforePost = await _prefs;
+      if ((_cookie == null || _cookie!.isEmpty) &&
+          prefsBeforePost.getString('php_cookie') != null) {
+        _cookie = prefsBeforePost.getString('php_cookie');
+        print('Loaded cookie from prefs in post(): $_cookie');
+      }
+      print(
+        'Before POST - _cookie: $_cookie, prefs php_cookie: ${prefsBeforePost.getString('php_cookie')}',
+      );
+      print('Outgoing POST headers: ${_headers()}');
       final response = await _withTimeout(
         _client.post(
           Uri.parse(url),
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
+          headers: _headers(),
           body: json.encode(body),
         ),
       );
@@ -1096,6 +1284,39 @@ class ApiService {
       throw Exception('Request timed out. Please try again.');
     } catch (e) {
       throw Exception('Failed to make POST request: $e');
+    }
+  }
+
+  /// Send a DELETE request to the API for the given endpoint with a JSON body.
+  /// Returns parsed JSON as Map<String,dynamic>.
+  Future<Map<String, dynamic>> delete(
+    String endpoint,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final url = endpoint.startsWith('auth/')
+          ? '$baseUrl/$endpoint'
+          : '$baseUrl/api/$endpoint';
+      _printRequestDetails('DELETE', endpoint, body);
+      final prefsBefore = await _prefs;
+      if ((_cookie == null || _cookie!.isEmpty) &&
+          prefsBefore.getString('php_cookie') != null) {
+        _cookie = prefsBefore.getString('php_cookie');
+        print('Loaded cookie from prefs in delete(): $_cookie');
+      }
+      print(
+        'Before DELETE - _cookie: $_cookie, prefs php_cookie: ${prefsBefore.getString('php_cookie')}',
+      );
+      final response = await _withTimeout(
+        _client.delete(
+          Uri.parse(url),
+          headers: _headers(),
+          body: jsonEncode(body),
+        ),
+      );
+      return _handleResponse(response);
+    } catch (e) {
+      throw Exception('Failed to make DELETE request: $e');
     }
   }
 
@@ -1136,6 +1357,9 @@ class ApiService {
     final prefs = await _prefs;
     await prefs.remove(_userIdKey);
     await prefs.remove(_userKey);
+    // Remove persisted cookie and clear in-memory cookie
+    await prefs.remove('php_cookie');
+    _cookie = null;
   }
 
   Future<void> saveUserData(Map<String, dynamic> userData) async {
@@ -1148,7 +1372,7 @@ class ApiService {
         // Fetch fresh user data from API
         final response = await _client.get(
           Uri.parse('$baseUrl/api/subscriber/$userId'),
-          headers: {'Content-Type': 'application/json'},
+          headers: _headers(),
         );
 
         if (response.statusCode == 200) {
@@ -1194,7 +1418,7 @@ class ApiService {
           // Fetch fresh data from API
           final response = await _client.get(
             Uri.parse('$baseUrl/api/subscriber/$userId'),
-            headers: {'Content-Type': 'application/json'},
+            headers: _headers(),
           );
 
           if (response.statusCode == 200) {

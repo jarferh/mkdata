@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 
@@ -31,8 +30,7 @@ class _WelcomeBonusPageState extends State<WelcomeBonusPage> {
         _errorMessage = '';
       });
 
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
+      final userId = await ApiService().getUserId();
 
       if (userId == null) {
         setState(() {
@@ -43,51 +41,26 @@ class _WelcomeBonusPageState extends State<WelcomeBonusPage> {
       }
 
       // Fetch welcome bonus settings
-      final settingsResponse = await http
-          .get(
-            Uri.parse('${ApiService.baseUrl}/api/welcome-bonus-settings'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 60));
-
-      if (settingsResponse.statusCode == 200) {
-        final settingsData = jsonDecode(settingsResponse.body);
-        if (settingsData['status'] == 'success') {
-          final data = settingsData['data'];
-          setState(() {
-            _bonusAmount = double.parse(data['amount'].toString());
-          });
-        }
+      final settingsResp = await ApiService().get('welcome-bonus-settings');
+      if (settingsResp['status'] == 'success') {
+        final data = settingsResp['data'];
+        setState(() => _bonusAmount = double.parse(data['amount'].toString()));
       }
 
       // Fetch user's bonus status
-      final statusResponse = await http
-          .get(
-            Uri.parse(
-              '${ApiService.baseUrl}/api/welcome-bonus-status?user_id=$userId',
-            ),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 60));
-
-      if (statusResponse.statusCode == 200) {
-        final statusData = jsonDecode(statusResponse.body);
-        if (statusData['status'] == 'success') {
-          final data = statusData['data'];
-          setState(() {
-            _hasClaimed = data['has_claimed'] ?? false;
-            _isLoading = false;
-          });
-        } else {
-          setState(() {
-            _errorMessage =
-                statusData['message'] ?? 'Failed to load bonus status';
-            _isLoading = false;
-          });
-        }
+      final statusResp = await ApiService().get(
+        'welcome-bonus-status?user_id=$userId',
+      );
+      if (statusResp['status'] == 'success') {
+        final data = statusResp['data'];
+        setState(() {
+          _hasClaimed = data['has_claimed'] ?? false;
+          _isLoading = false;
+        });
       } else {
         setState(() {
-          _errorMessage = 'Failed to load bonus status';
+          _errorMessage =
+              statusResp['message'] ?? 'Failed to load bonus status';
           _isLoading = false;
         });
       }
@@ -106,8 +79,7 @@ class _WelcomeBonusPageState extends State<WelcomeBonusPage> {
         _errorMessage = '';
       });
 
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
+      final userId = await ApiService().getUserId();
 
       if (userId == null) {
         setState(() {
@@ -117,49 +89,26 @@ class _WelcomeBonusPageState extends State<WelcomeBonusPage> {
         return;
       }
 
-      final response = await http
-          .post(
-            Uri.parse('${ApiService.baseUrl}/api/claim-welcome-bonus'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'user_id': userId}),
-          )
-          .timeout(const Duration(seconds: 60));
-
-      print('Claim response status: ${response.statusCode}');
-      print('Claim response body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final responseData = jsonDecode(response.body);
-        print('Response data: $responseData');
-
-        if (responseData['status'] == 'success') {
-          setState(() {
-            _hasClaimed = true;
-            _isClaimingBonus = false;
-          });
-
-          // Show success dialog
-          _showSuccessDialog(
-            'Bonus Claimed!',
-            'You have successfully claimed ₦${_bonusAmount.toStringAsFixed(2)}. This has been added to your wallet.',
-          );
-
-          // Reload user data to update wallet after a brief delay
-          await Future.delayed(const Duration(milliseconds: 500));
-          await _reloadUserData();
-        } else {
-          setState(() {
-            _errorMessage = responseData['message'] ?? 'Failed to claim bonus';
-            _isClaimingBonus = false;
-          });
-        }
-      } else {
-        final responseData = jsonDecode(response.body);
-        print('Error response: $responseData');
+      final resp = await ApiService().post('claim-welcome-bonus', {
+        'user_id': userId,
+      });
+      print('Claim response: $resp');
+      if (resp['status'] == 'success') {
         setState(() {
-          _errorMessage =
-              responseData['message'] ??
-              'Failed to claim bonus. Please try again.';
+          _hasClaimed = true;
+          _isClaimingBonus = false;
+        });
+
+        _showSuccessDialog(
+          'Bonus Claimed!',
+          'You have successfully claimed ₦${_bonusAmount.toStringAsFixed(2)}. This has been added to your wallet.',
+        );
+
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _reloadUserData();
+      } else {
+        setState(() {
+          _errorMessage = resp['message'] ?? 'Failed to claim bonus';
           _isClaimingBonus = false;
         });
       }
@@ -174,32 +123,16 @@ class _WelcomeBonusPageState extends State<WelcomeBonusPage> {
 
   Future<void> _reloadUserData() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id');
+      final userId = await ApiService().getUserId();
 
       if (userId != null) {
-        final response = await http
-            .get(
-              Uri.parse('${ApiService.baseUrl}/api/account-details?id=$userId'),
-              headers: {'Content-Type': 'application/json'},
-            )
-            .timeout(const Duration(seconds: 60));
-
-        print('Account details response: ${response.statusCode}');
-        print('Account details body: ${response.body}');
-
-        if (response.statusCode == 200) {
-          final responseData = jsonDecode(response.body);
-          if (responseData['status'] == 'success') {
-            final userData = responseData['data'];
-            print('User data from server: $userData');
-
-            await prefs.setString('user_data', jsonEncode(userData));
-
-            // Update local wallet for display if needed
-            if (userData['sWallet'] != null) {
-              print('Updated wallet balance: ${userData['sWallet']}');
-            }
+        final response = await ApiService().get('account-details?id=$userId');
+        if (response['status'] == 'success') {
+          final userData = response['data'];
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('user_data', jsonEncode(userData));
+          if (userData['sWallet'] != null) {
+            print('Updated wallet balance: ${userData['sWallet']}');
           }
         }
       }

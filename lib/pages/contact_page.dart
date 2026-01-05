@@ -68,8 +68,10 @@ class ContactPage extends StatelessWidget {
         foregroundColor: Colors.white,
         elevation: 0,
       ),
-      body: SingleChildScrollView(
-        child: Column(
+      body: Padding(
+        padding: EdgeInsets.only(bottom: kBottomNavigationBarHeight),
+        child: SingleChildScrollView(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Top gradient header
@@ -362,6 +364,6 @@ class ContactPage extends StatelessWidget {
           ],
         ),
       ),
-    );
+    ));
   }
 }

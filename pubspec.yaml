@@ -2,7 +2,7 @@ name: mkdata
 description: "A new Flutter project."
 
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: '>=3.8.0 <4.0.0'
@@ -49,5 +49,3 @@ flutter:
     - assets/audios/sucess.mp3
     - assets/images/red-alert-icon.png
     - assets/images/success_icon.png
-
-

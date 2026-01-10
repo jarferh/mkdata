@@ -106,7 +106,7 @@ class _DailyDataPageState extends State<DailyDataPage> {
   List<String> _getPlanTypesForNetwork(String network) {
     switch (network) {
       case 'MTN':
-        return ['MTN SME', 'MTN SME2', 'MTN Corporate', 'MTN Gifting'];
+        return ['MTN SME', 'MTN Gifting', 'MTN Corporate', 'MTN SME2'];
       case 'Airtel':
         return ['Airtel Corporate', 'Airtel Gifting', 'Airtel SME'];
       case 'Glo':
@@ -1360,16 +1360,19 @@ class _DailyDataPageState extends State<DailyDataPage> {
                         height: _getResponsiveIconSize(context, 50),
                         child: ListView.builder(
                           scrollDirection: Axis.horizontal,
-                          itemCount: _getPlanTypesForNetwork(
-                            _selectedNetwork,
-                          ).length,
+                          itemCount: _getPlanTypesForNetwork(_selectedNetwork)
+                              .where((planType) => _isPlanTypeEnabled(planType))
+                              .length,
                           itemBuilder: (context, index) {
-                            final planTypes = _getPlanTypesForNetwork(
-                              _selectedNetwork,
-                            );
+                            final planTypes =
+                                _getPlanTypesForNetwork(_selectedNetwork)
+                                    .where(
+                                      (planType) =>
+                                          _isPlanTypeEnabled(planType),
+                                    )
+                                    .toList();
                             final planType = planTypes[index];
                             final isSelected = _selectedPlanType == planType;
-                            final isEnabled = _isPlanTypeEnabled(planType);
                             return Padding(
                               padding: EdgeInsets.only(
                                 right: _getResponsiveSpacing(context, 8),
@@ -1377,19 +1380,16 @@ class _DailyDataPageState extends State<DailyDataPage> {
                               child: _buildPlanTypeButton(
                                 planType,
                                 isSelected,
-                                isEnabled,
-                                isEnabled
-                                    ? () {
-                                        setState(
-                                          () => _selectedPlanType = planType,
-                                        );
-                                        // Fetch data plans after state update
-                                        WidgetsBinding.instance
-                                            .addPostFrameCallback((_) {
-                                              _handleNetworkOrTypeChange();
-                                            });
-                                      }
-                                    : null,
+                                true,
+                                () {
+                                  setState(() => _selectedPlanType = planType);
+                                  // Fetch data plans after state update
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    _handleNetworkOrTypeChange();
+                                  });
+                                },
                               ),
                             );
                           },

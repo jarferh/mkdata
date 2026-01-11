@@ -301,21 +301,21 @@ try {
             $response['status'] = $svcResult['status'] ?? 'failed';
 
             // Send push notification for all attempts (success and failure)
-            try {
-                sendTransactionNotification(
-                    userId: (string)$authenticatedUserId,
-                    transactionType: 'airtime',
-                    transactionData: [
-                        'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
-                        'amount' => $data->amount,
-                        'network' => $networkForService,
-                        'phone' => $data->phone,
-                        'status' => $response['status']
-                    ]
-                );
-            } catch (Exception $e) {
-                error_log('Notification error (non-blocking): ' . $e->getMessage());
-            }
+            // try {
+            //     sendTransactionNotification(
+            //         userId: (string)$authenticatedUserId,
+            //         transactionType: 'airtime',
+            //         transactionData: [
+            //             'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
+            //             'amount' => $data->amount,
+            //             'network' => $networkForService,
+            //             'phone' => $data->phone,
+            //             'status' => $response['status']
+            //         ]
+            //     );
+            // } catch (Exception $e) {
+            //     error_log('Notification error (non-blocking): ' . $e->getMessage());
+            // }
 
             // Set HTTP response code based on service status
             if ($response['status'] === 'failed') {
@@ -425,26 +425,26 @@ try {
             $response['status'] = $svcResult['status'] ?? 'failed';
 
             // Send push notification for all attempts (success and failure)
-            try {
-                $notifStatus = $response['status'] ?? ($svcResult['status'] ?? 'failed');
-                // Only send notification for success or processing states
-                if (in_array($notifStatus, ['success', 'processing'], true)) {
-                    sendTransactionNotification(
-                        userId: (string)$authenticatedUserId,
-                        transactionType: 'data',
-                        transactionData: [
-                            'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
-                            'plan_id' => $planId,
-                            'network' => $networkId,
-                            'phone' => $phone,
-                            'status' => $notifStatus
-                        ]
-                    );
-                }
-                // Do not send a success-style notification when the purchase failed
-            } catch (Exception $e) {
-                error_log('Notification error (non-blocking): ' . $e->getMessage());
-            }
+            // try {
+            //     $notifStatus = $response['status'] ?? ($svcResult['status'] ?? 'failed');
+            //     // Only send notification for success or processing states
+            //     if (in_array($notifStatus, ['success', 'processing'], true)) {
+            //         sendTransactionNotification(
+            //             userId: (string)$authenticatedUserId,
+            //             transactionType: 'data',
+            //             transactionData: [
+            //                 'transaction_id' => $svcResult['data']['ref'] ?? 'N/A',
+            //                 'plan_id' => $planId,
+            //                 'network' => $networkId,
+            //                 'phone' => $phone,
+            //                 'status' => $notifStatus
+            //             ]
+            //         );
+            //     }
+            //     // Do not send a success-style notification when the purchase failed
+            // } catch (Exception $e) {
+            //     error_log('Notification error (non-blocking): ' . $e->getMessage());
+            // }
 
             // Set HTTP response code based on service status
             if ($response['status'] === 'failed') {
@@ -2249,40 +2249,11 @@ try {
                 // Generate transaction reference
                 $transactionRef = 'DD' . time() . bin2hex(random_bytes(4));
 
-                // Calculate next delivery date (first delivery at current time)
+                // Calculate next delivery date - set to NOW so delivery cron picks it up immediately
+                // The delivery cron will handle ALL deliveries (including the first one)
                 $nextDeliveryDate = new DateTime('now');
-                
-                // Try first delivery but don't fail the whole purchase if it fails
-                error_log("purchase-daily-data: attempting first data delivery. Phone: " . $phoneNumber . ", Network: " . $networkName . ", Plan: " . $planId . ", User: " . $userId);
-                
-                $firstDeliverySuccess = false;
-                $deliveryResult = null;
-                $deliveryError = null;
-                
-                try {
-                    $service = new DataService();
-                    $deliveryResult = $service->purchaseData(
-                        resolveNetworkIdFromInput($networkName) ?? $networkName,
-                        $phoneNumber,
-                        $planId,
-                        $userId
-                    );
-                    
-                    if ($deliveryResult && ($deliveryResult['status'] === 'success' || $deliveryResult['status'] === 'processing')) {
-                        error_log("purchase-daily-data: first delivery successful. Result: " . json_encode($deliveryResult));
-                        $firstDeliverySuccess = true;
-                    } else {
-                        error_log("purchase-daily-data: first delivery failed. Result: " . json_encode($deliveryResult));
-                        $deliveryError = $deliveryResult['message'] ?? 'Unknown error';
-                    }
-                } catch (Exception $deliveryEx) {
-                    error_log("purchase-daily-data: first delivery exception: " . $deliveryEx->getMessage());
-                    $deliveryError = $deliveryEx->getMessage();
-                    // Don't rethrow - continue with plan setup even if delivery fails
-                }
-
-                // Remaining days calculation: if first delivery succeeded, decrement by 1; otherwise keep full total
-                $remainingDays = $firstDeliverySuccess ? ($totalDays - 1) : $totalDays;
+                // Set remaining_days to full total - cron will decrement after each delivery
+                $remainingDays = $totalDays;
 
                 // Insert into daily_data_plans table
                 $insertQuery = "INSERT INTO daily_data_plans 
@@ -2345,7 +2316,7 @@ try {
                 
                 $newBalance = $userWallet - $totalAmount;
                 $transactionDescription = $userType . ' - ' . $planId . ' (' . $totalDays . ' days @ ₦' . $pricePerDay . '/day) to ' . $phoneNumber;
-                $apiLog = 'Daily data plan purchase: ' . $transactionRef . ' (First delivery: ' . ($firstDeliverySuccess ? 'success' : ($deliveryError ? 'failed - ' . $deliveryError : 'pending')) . ')';
+                $apiLog = 'Daily data plan purchase: ' . $transactionRef . ' (Deliveries handled by cron)';
                 
                 error_log("purchase-daily-data: inserting transaction record. Query: " . $transactionQuery . " Params: " . json_encode([$userId, $transactionDescription, $totalAmount, $userWallet, $newBalance, $transactionRef, $apiLog]));
                 try {

@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../utils/network_utils.dart';
+import '../services/api_service.dart';
 
 class WelcomePage extends StatefulWidget {
   final bool restorePrevious;
@@ -228,6 +229,16 @@ class _WelcomePageState extends State<WelcomePage> {
 
     try {
       if (_enteredPin == storedPin) {
+        // Check if user is still authenticated
+        final isAuthenticated = await _checkAuthenticationStatus();
+        if (!isAuthenticated) {
+          if (mounted) {
+            // Show logout modal for expired session
+            _showSessionExpiredModal();
+          }
+          return;
+        }
+
         // Ensure internet is available before proceeding
         final ok = await _checkInternetConnection();
         if (!ok) {
@@ -267,6 +278,79 @@ class _WelcomePageState extends State<WelcomePage> {
     await prefs.remove('login_pin');
     if (mounted) {
       Navigator.of(context).pushReplacementNamed('/login');
+    }
+  }
+
+  Future<bool> _checkAuthenticationStatus() async {
+    try {
+      // Check if user_data exists in SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      final userData = prefs.getString('user_data');
+
+      if (userData == null) {
+        debugPrint('User data not found - session expired');
+        return false;
+      }
+
+      // Verify with API that session is still valid
+      try {
+        final apiService = ApiService();
+        final userId = await apiService.getUserId();
+        if (userId == null) {
+          debugPrint('User ID not found - session expired');
+          return false;
+        }
+        return true;
+      } catch (e) {
+        debugPrint('Error checking authentication: $e');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('Error in _checkAuthenticationStatus: $e');
+      return false;
+    }
+  }
+
+  void _showSessionExpiredModal() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Session Expired'),
+        content: const Text(
+          'Your session has expired. Please log in again to continue.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _proceedWithLogout();
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _proceedWithLogout() async {
+    try {
+      // Clear auth data using ApiService
+      await ApiService().clearAuth();
+
+      if (mounted) {
+        // Navigate to login page
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil('/login', (route) => false);
+      }
+    } catch (e) {
+      debugPrint('Error during logout: $e');
+      if (mounted) {
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil('/login', (route) => false);
+      }
     }
   }
 

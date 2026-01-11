@@ -468,21 +468,124 @@ class _AirtimePageState extends State<AirtimePage> {
     // Validate phone number matches selected network
     final phone = _phoneController.text.trim();
     if (!_isValidNetworkNumber(phone, _selectedNetwork)) {
-      _showErrorModal(
-        'Invalid Phone Number',
-        'The phone number "$phone" is not valid for $_selectedNetwork network.\n\nPlease enter a valid $_selectedNetwork number or select a different network.',
-        onRetry: () {
-          _phoneFocusNode.requestFocus();
-        },
-      );
-      setState(() {
-        _phoneError = 'This number is not a valid $_selectedNetwork number';
-        _phoneValid = false;
-      });
+      // Show warning modal instead of blocking - user can still proceed
+      _showPhoneValidationWarning(phone);
       return false;
     }
 
     return true;
+  }
+
+  // Show warning when phone number is not validated
+  void _showPhoneValidationWarning(String phone) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          padding: EdgeInsets.all(_getResponsivePadding(context, 20)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Warning Icon with orange background circle
+              Container(
+                width: _getResponsiveIconSize(context, 60),
+                height: _getResponsiveIconSize(context, 60),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFFce4323).withOpacity(0.1),
+                ),
+                child: Icon(
+                  Icons.warning_outlined,
+                  color: const Color(0xFFce4323),
+                  size: _getResponsiveIconSize(context, 32),
+                ),
+              ),
+              SizedBox(height: _getResponsiveSpacing(context, 16)),
+              // Title
+              Text(
+                'Phone Number Warning',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: _getResponsiveFontSize(context, 16),
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black,
+                ),
+              ),
+              SizedBox(height: _getResponsiveSpacing(context, 12)),
+              // Message
+              Text(
+                'The phone number "$phone" may not be valid for $_selectedNetwork network.\n\nDo you want to proceed anyway?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: _getResponsiveFontSize(context, 13),
+                  color: Colors.grey.shade600,
+                  height: 1.6,
+                ),
+              ),
+              SizedBox(height: _getResponsiveSpacing(context, 20)),
+              // Buttons
+              SizedBox(
+                width: double.infinity,
+                height: _getResponsiveIconSize(context, 44),
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    // Proceed with confirmation even if phone is not validated
+                    _showConfirmationSheet();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFce4323),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(
+                    'Proceed',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: _getResponsiveFontSize(context, 14),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(height: _getResponsiveSpacing(context, 8)),
+              SizedBox(
+                width: double.infinity,
+                height: _getResponsiveIconSize(context, 44),
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                    _phoneFocusNode.requestFocus();
+                  },
+                  style: TextButton.styleFrom(
+                    backgroundColor: Colors.grey.shade100,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontSize: _getResponsiveFontSize(context, 14),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   // Show confirmation sheet

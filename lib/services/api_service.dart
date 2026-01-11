@@ -14,6 +14,10 @@ class ApiService {
   final HttpClient _ioHttpClient = HttpClient();
   late final http.Client _client;
 
+  // Stream controller for auth failure notifications
+  static final _authFailureController = StreamController<void>.broadcast();
+  static Stream<void> get authFailure => _authFailureController.stream;
+
   ApiService() {
     // Initialize the IO client using the pre-created HttpClient.
     _client = IOClient(_ioHttpClient);
@@ -1329,6 +1333,17 @@ class ApiService {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return responseData;
       } else {
+        // Check for authentication failure and trigger logout
+        if (response.statusCode == 401 ||
+            (responseData is Map &&
+                (responseData['message']?.toString().toLowerCase().contains(
+                      'not authenticated',
+                    ) ??
+                    false))) {
+          print('Auth failure detected: triggering auto-logout');
+          _triggerAuthFailure();
+        }
+
         // Prefer the explicit message field; otherwise fallback to an error key
         final errorMessage = (responseData is Map)
             ? (responseData['message'] ??
@@ -1353,12 +1368,21 @@ class ApiService {
     }
   }
 
+  void _triggerAuthFailure() {
+    // Broadcast auth failure to all listeners
+    _authFailureController.add(null);
+  }
+
   Future<void> clearAuth() async {
     final prefs = await _prefs;
+    // Clear all auth-related data
     await prefs.remove(_userIdKey);
     await prefs.remove(_userKey);
-    // Remove persisted cookie and clear in-memory cookie
     await prefs.remove('php_cookie');
+    await prefs.remove('login_pin');
+    await prefs.remove('biometric_enabled');
+    await prefs.remove('fcm_token');
+    // Clear in-memory cookie
     _cookie = null;
   }
 

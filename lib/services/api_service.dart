@@ -298,6 +298,52 @@ class ApiService {
   }
 
   // Get network statuses to determine which networks are enabled/disabled
+
+  // Verify authentication status with the backend
+  Future<bool> verifyAuthenticationWithBackend() async {
+    try {
+      print('Verifying authentication with backend...');
+      final url = '$baseUrl/auth/verify-session.php';
+
+      // Make a GET request to verify session - this will include the PHPSESSID cookie
+      final response = await _withTimeout(
+        http.get(Uri.parse(url), headers: _headers()),
+      );
+
+      print('Verify session response status: ${response.statusCode}');
+      print('Verify session response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        try {
+          final data = json.decode(response.body);
+          // Check if response indicates user is authenticated
+          if (data is Map && data['status'] == 'authenticated') {
+            print('Backend confirmed: User is authenticated');
+            return true;
+          } else {
+            print(
+              'Backend response: User not authenticated - ${data['message'] ?? 'No message'}',
+            );
+            return false;
+          }
+        } catch (e) {
+          print('Error parsing verify session response: $e');
+          return false;
+        }
+      } else if (response.statusCode == 401) {
+        print('Backend returned 401: Session expired or invalid');
+        return false;
+      } else {
+        print('Backend returned status code: ${response.statusCode}');
+        return false;
+      }
+    } catch (e) {
+      print('Error verifying authentication: $e');
+      // If verification fails, consider it as not authenticated
+      return false;
+    }
+  }
+
   Future<Map<String, dynamic>> getNetworkStatuses() async {
     try {
       final response = await _withTimeout(

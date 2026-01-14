@@ -45,11 +45,14 @@ class _InvitePageState extends State<InvitePage> {
       final prefs = await SharedPreferences.getInstance();
       final userDataStr = prefs.getString('user_data');
 
+      print('[InvitePage] Loading user data from SharedPreferences');
       if (userDataStr != null) {
+        print('[InvitePage] User data found: $userDataStr');
         final data = json.decode(userDataStr);
         setState(() {
           userData = data;
           userId = data['sId'] ?? 0;
+          print('[InvitePage] Set userId to: $userId');
           // Combine first and last name and remove any whitespace
           referralCode = '${data['sFname'] ?? ''}${data['sLname'] ?? ''}'
               .replaceAll(' ', '')
@@ -67,7 +70,10 @@ class _InvitePageState extends State<InvitePage> {
               0.0;
         });
         // Load referrals after user data is set
+        print('[InvitePage] Calling _fetchReferrals...');
         await _fetchReferrals();
+      } else {
+        print('[InvitePage] No user data found in SharedPreferences');
       }
     } catch (e) {
       print('[InvitePage] Error loading user data: $e');
@@ -75,19 +81,32 @@ class _InvitePageState extends State<InvitePage> {
   }
 
   Future<void> _fetchReferrals() async {
-    if (userId == 0) return;
+    if (userId == 0) {
+      print('[InvitePage] userId is 0, skipping _fetchReferrals');
+      return;
+    }
 
+    print('[InvitePage] Starting _fetchReferrals for userId: $userId');
     setState(() {
       _isLoadingReferrals = true;
     });
 
     try {
       final api = ApiService();
+      print('[InvitePage] Calling API: get-referrals.php with userId: $userId');
       final response = await api.post('get-referrals.php', {'user_id': userId});
-      if (response['status'] == 'success' && response['data'] != null) {
-        final stats = response['data']['stats'] as Map<String, dynamic>? ?? {};
-        final referralsData =
-            response['data']['referrals'] as List<dynamic>? ?? [];
+
+      print('[InvitePage] API Response: $response');
+      print('[InvitePage] Response success: ${response['success']}');
+      print('[InvitePage] Response stats: ${response['stats']}');
+      print('[InvitePage] Response referrals: ${response['referrals']}');
+
+      if (response['success'] == true && response['referrals'] != null) {
+        final stats = response['stats'] as Map<String, dynamic>? ?? {};
+        final referralsData = response['referrals'] as List<dynamic>? ?? [];
+
+        print('[InvitePage] Stats: $stats');
+        print('[InvitePage] Referrals count: ${referralsData.length}');
 
         setState(() {
           totalReferrals = stats['total_referrals'] ?? 0;
@@ -115,10 +134,15 @@ class _InvitePageState extends State<InvitePage> {
           _isLoadingReferrals = false;
         });
       } else {
+        print('[InvitePage] API returned non-success or no referrals data');
+        print(
+          '[InvitePage] Success: ${response['success']}, Referrals: ${response['referrals']}',
+        );
         setState(() => _isLoadingReferrals = false);
       }
     } catch (e) {
       print('[InvitePage] Error fetching referrals: $e');
+      print('[InvitePage] Error type: ${e.runtimeType}');
       setState(() {
         _isLoadingReferrals = false;
       });
@@ -133,11 +157,16 @@ class _InvitePageState extends State<InvitePage> {
         'referral_id': referralId,
       });
 
-      if (response['status'] == 'success') {
-        setState(() => _commission += amount);
+      // API returns top-level 'success' boolean and 'reward_amount'
+      if (response['success'] == true) {
+        // Prefer server-provided reward amount when available
+        final serverAmount = (response['reward_amount'] != null)
+            ? double.tryParse(response['reward_amount'].toString()) ?? amount
+            : amount;
+        setState(() => _commission += serverAmount);
         showNetworkErrorSnackBar(
           context,
-          'Reward claimed: ₦${amount.toStringAsFixed(2)}',
+          'Reward claimed: ₦${serverAmount.toStringAsFixed(2)}',
         );
         await _fetchReferrals();
       } else {
@@ -273,11 +302,14 @@ class _InvitePageState extends State<InvitePage> {
                         'amount': amount,
                       });
 
-                      if (response['status'] == 'success') {
+                      // API uses top-level 'success' and returns 'new_ref_wallet'
+                      if (response['success'] == true) {
                         setState(() {
                           _commission =
-                              (response['data']?['new_ref_wallet'] ?? 0.0)
-                                  .toDouble();
+                              double.tryParse(
+                                response['new_ref_wallet']?.toString() ?? '0',
+                              ) ??
+                              0.0;
                         });
 
                         if (mounted) {

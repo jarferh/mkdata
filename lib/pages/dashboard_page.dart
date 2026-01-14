@@ -1579,17 +1579,12 @@ class _DashboardPageState extends State<DashboardPage> {
                         crossAxisSpacing: getResponsiveSize(context, 10),
                         childAspectRatio: 1.0,
                         children: [
+                          // Row 1: Data Bundle, Airtime, Electricity
                           _buildFeatureButton(
                             'Data Bundle',
                             Icons.signal_cellular_alt,
                             const Color(0xFFce4323),
                             () => _pushAndRefresh(const DataPage()),
-                          ),
-                          _buildFeatureButton(
-                            'Daily Data',
-                            Icons.calendar_today,
-                            const Color(0xFFce4323),
-                            () => _pushAndRefresh(const DailyDataPage()),
                           ),
                           _buildFeatureButton(
                             'Airtime',
@@ -1603,12 +1598,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             const Color(0xFFce4323),
                             () => _pushAndRefresh(const ElectricityPage()),
                           ),
-                          _buildFeatureButton(
-                            'Airtime 2 Cash',
-                            Icons.currency_exchange,
-                            const Color(0xFFce4323),
-                            () => _pushAndRefresh(const Airtime2CashPage()),
-                          ),
+                          // Row 2: Cable, Airtime 2 Cash, Exam
                           _buildFeatureButton(
                             'Cable',
                             Icons.live_tv,
@@ -1616,10 +1606,23 @@ class _DashboardPageState extends State<DashboardPage> {
                             () => _pushAndRefresh(const CablePage()),
                           ),
                           _buildFeatureButton(
+                            'Airtime 2 Cash',
+                            Icons.currency_exchange,
+                            const Color(0xFFce4323),
+                            () => _pushAndRefresh(const Airtime2CashPage()),
+                          ),
+                          _buildFeatureButton(
                             'Exam',
                             Icons.assignment,
                             const Color(0xFFce4323),
                             () => _pushAndRefresh(const ExamPinPage()),
+                          ),
+                          // Row 3: Daily Data, Data Card, Recharge Card
+                          _buildFeatureButton(
+                            'Daily Data',
+                            Icons.calendar_today,
+                            const Color(0xFFce4323),
+                            () => _pushAndRefresh(const DailyDataPage()),
                           ),
                           _buildFeatureButton(
                             'Data Card',
@@ -1633,6 +1636,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             const Color(0xFFce4323),
                             () => _pushAndRefresh(const CardPinPage()),
                           ),
+                          // Row 4: Past Q, Welcome Bonus, Spin & Win (unchanged)
                           _buildFeatureButton(
                             'Past Q',
                             Icons.help_outline,

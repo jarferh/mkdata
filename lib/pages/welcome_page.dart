@@ -283,30 +283,33 @@ class _WelcomePageState extends State<WelcomePage> {
 
   Future<bool> _checkAuthenticationStatus() async {
     try {
-      // Check if user_data exists in SharedPreferences
+      debugPrint('Starting authentication check...');
+
+      // Check if user_data exists in local storage first
       final prefs = await SharedPreferences.getInstance();
       final userData = prefs.getString('user_data');
 
       if (userData == null) {
-        debugPrint('User data not found - session expired');
+        debugPrint('User data not found in local storage - session expired');
         return false;
       }
 
-      // Verify with API that session is still valid
-      try {
-        final apiService = ApiService();
-        final userId = await apiService.getUserId();
-        if (userId == null) {
-          debugPrint('User ID not found - session expired');
-          return false;
-        }
+      // Now verify with backend that session is still valid
+      debugPrint('User data found locally, verifying with backend...');
+      final apiService = ApiService();
+      final isAuthenticated = await apiService
+          .verifyAuthenticationWithBackend();
+
+      if (isAuthenticated) {
+        debugPrint('Backend confirmed: User is authenticated');
         return true;
-      } catch (e) {
-        debugPrint('Error checking authentication: $e');
+      } else {
+        debugPrint('Backend verification failed: Session expired or invalid');
         return false;
       }
     } catch (e) {
       debugPrint('Error in _checkAuthenticationStatus: $e');
+      // If there's an error during verification, consider user not authenticated
       return false;
     }
   }

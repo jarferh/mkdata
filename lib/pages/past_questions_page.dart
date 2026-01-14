@@ -156,7 +156,7 @@ class _PastQuestionsPageState extends State<PastQuestionsPage> {
 
   Future<void> _viewPDF(String filePath) async {
     try {
-      final url = 'https://test.mkdata.com.ng$filePath';
+      final url = 'https://mkdata.com.ng$filePath';
       if (await canLaunchUrl(Uri.parse(url))) {
         await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
       } else {
@@ -179,7 +179,7 @@ class _PastQuestionsPageState extends State<PastQuestionsPage> {
 
   Future<void> _downloadPDF(String filePath, String fileName) async {
     try {
-      final url = 'https://test.mkdata.com.ng$filePath';
+      final url = 'https://mkdata.com.ng$filePath';
       if (await canLaunchUrl(Uri.parse(url))) {
         await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
         ScaffoldMessenger.of(context).showSnackBar(

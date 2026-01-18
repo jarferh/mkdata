@@ -13,9 +13,11 @@ date_default_timezone_set('Africa/Lagos');
 define('BASEDIR', __DIR__);
 
 require_once BASEDIR . '/services/data.service.php';
+require_once BASEDIR . '/services/delivery_log.service.php';
 require_once BASEDIR . '/config/database.php';
 
 use Binali\Config\Database;
+use Binali\Services\DeliveryLogService;
 
 // Prevent concurrent executions
 $lockFile = BASEDIR . '/delivery-cron.lock';
@@ -27,6 +29,7 @@ if (!flock($lock, LOCK_EX | LOCK_NB)) {
 // Configuration
 $db = new Database();
 $ds = new DataService();
+$logService = new DeliveryLogService();
 $logDir = BASEDIR . '/logs';
 @mkdir($logDir, 0755, true);
 $logFile = $logDir . '/delivery-' . date('Y-m-d') . '.log';
@@ -49,12 +52,39 @@ function log_msg($message, $level = 'INFO') {
  * Deliver data for a single plan
  */
 function deliver_plan($plan) {
-    global $db, $ds, $networks;
+    global $db, $ds, $logService, $networks;
     
     $planId = $plan['id'];
     $userId = $plan['user_id'];
     $phone = $plan['phone_number'];
-    $network = intval($plan['network']);
+    // Normalize network: accept numeric id or network name/code
+    $rawNetwork = isset($plan['network']) ? $plan['network'] : (isset($plan['network_id']) ? $plan['network_id'] : null);
+    $network = 0;
+    if ($rawNetwork === null || $rawNetwork === '') {
+        // no network provided
+        $network = 0;
+    } elseif (is_numeric($rawNetwork)) {
+        $network = intval($rawNetwork);
+    } else {
+        // try map by name/code (case-insensitive)
+        $rk = strtolower(trim($rawNetwork));
+        foreach ($networks as $nid => $nname) {
+            if (strpos(strtolower($nname), $rk) !== false || strpos($rk, strtolower($nname)) !== false || $rk === strtolower($nname)) {
+                $network = $nid;
+                break;
+            }
+        }
+        // if still zero, attempt common aliases
+        if ($network === 0) {
+            $aliases = [
+                'mtn' => 1, 'airtel' => 2, 'glo' => 3, '9mobile' => 4, 'etisalat' => 4, '9mobile' => 4
+            ];
+            $ak = preg_replace('/[^a-z0-9]/', '', $rk);
+            if (isset($aliases[$ak])) {
+                $network = $aliases[$ak];
+            }
+        }
+    }
     $planCode = $plan['plan_id'];
     $planType = $plan['user_type']; // SME, Corporate, Gifting
     $transRef = $plan['transaction_reference'];
@@ -68,13 +98,37 @@ function deliver_plan($plan) {
         
         if (empty($planData)) {
             log_msg("Plan code $planCode not found in dataplans", 'ERROR');
+            $logService->logDelivery([
+                'plan_id' => $planId,
+                'user_id' => $userId,
+                'phone_number' => $phone,
+                'network_id' => $network,
+                'plan_code' => $planCode,
+                'transaction_ref' => $transRef,
+                'status' => 'failed',
+                'error_message' => "Plan code $planCode not found"
+            ]);
             return false;
         }
         
         // Get provider details
+        // Validate network id before provider lookup
+        if (empty($network) || $network === 0) {
+            throw new Exception("Error fetching provider details: Invalid network ID: " . ($rawNetwork ?? 'NULL'));
+        }
         $provider = $ds->getDataProviderDetails($network, $planType);
         if (empty($provider)) {
             log_msg("No provider config for network $network, type $planType", 'ERROR');
+            $logService->logDelivery([
+                'plan_id' => $planId,
+                'user_id' => $userId,
+                'phone_number' => $phone,
+                'network_id' => $network,
+                'plan_code' => $planCode,
+                'transaction_ref' => $transRef,
+                'status' => 'failed',
+                'error_message' => "No provider config for network $network"
+            ]);
             return false;
         }
         
@@ -98,8 +152,8 @@ function deliver_plan($plan) {
         
         // Determine auth header
         $authHeader = strpos($providerUrl, 'smeplug.ng') !== false 
-            ? "Authorization: Token $apiKey"
-            : "Authorization: Bearer $apiKey";
+            ? "Authorization: Bearer $apiKey"
+            : "Authorization: Token $apiKey";
         
         // Send request
         $ch = curl_init();
@@ -125,6 +179,18 @@ function deliver_plan($plan) {
         $result = json_decode($response, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
             log_msg("Invalid JSON response (HTTP $httpCode): $response", 'ERROR');
+            $logService->logDelivery([
+                'plan_id' => $planId,
+                'user_id' => $userId,
+                'phone_number' => $phone,
+                'network_id' => $network,
+                'plan_code' => $planCode,
+                'transaction_ref' => $transRef,
+                'status' => 'failed',
+                'http_code' => $httpCode,
+                'provider_response' => $response,
+                'error_message' => 'Invalid JSON response'
+            ]);
             return false;
         }
         
@@ -160,14 +226,46 @@ function deliver_plan($plan) {
         
         if (!$isSuccess) {
             log_msg("Provider rejected: HTTP $httpCode | " . json_encode($result), 'WARNING');
+            $logService->logDelivery([
+                'plan_id' => $planId,
+                'user_id' => $userId,
+                'phone_number' => $phone,
+                'network_id' => $network,
+                'plan_code' => $planCode,
+                'transaction_ref' => $transRef,
+                'status' => 'failed',
+                'http_code' => $httpCode,
+                'provider_response' => json_encode($result)
+            ]);
             return false;
         }
         
         log_msg("✓ Delivered successfully to $phone", 'SUCCESS');
+        $logService->logDelivery([
+            'plan_id' => $planId,
+            'user_id' => $userId,
+            'phone_number' => $phone,
+            'network_id' => $network,
+            'plan_code' => $planCode,
+            'transaction_ref' => $transRef,
+            'status' => 'success',
+            'http_code' => $httpCode,
+            'provider_response' => json_encode($result)
+        ]);
         return true;
         
     } catch (Exception $e) {
         log_msg("Exception: " . $e->getMessage(), 'ERROR');
+        $logService->logDelivery([
+            'plan_id' => $planId,
+            'user_id' => $userId,
+            'phone_number' => $phone,
+            'network_id' => $network,
+            'plan_code' => $planCode,
+            'transaction_ref' => $transRef,
+            'status' => 'failed',
+            'error_message' => $e->getMessage()
+        ]);
         return false;
     }
 }

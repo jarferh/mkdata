@@ -151,9 +151,9 @@ class ElectricityService {
         }
     }
 
-    /* REAL FUNCTION - COMMENTED OUT FOR TESTING
+    /* REAL FUNCTION - COMMENTED OUT FOR TESTING */
     public function purchaseElectricity_REAL($meterNumber, $providerId, $amount, $meterType = 'prepaid', $phone = '') {
-            
+        try {
             // Get the provider information
             $query = "SELECT provider, abbreviation FROM electricityid WHERE eId = ?";
             $provider = $this->db->query($query, [$providerId]);
@@ -436,208 +436,208 @@ class ElectricityService {
             throw new Exception("Error purchasing electricity: " . $e->getMessage());
         }
     }
-    */  // END OF COMMENTED REAL FUNCTION
+    // END OF COMMENTED REAL FUNCTION
 
-    public function validateMeterNumber($meterNumber, $providerId, $meterType = 'prepaid') {
-        try {
-            // Log incoming parameters
-            error_log("\n=== METER VALIDATION INIT START ===");
-            error_log("Meter Number: " . $meterNumber);
-            error_log("Provider ID: " . $providerId);
-            error_log("Meter Type: " . $meterType);
-            error_log("=== METER VALIDATION INIT END ===\n");
+    // public function validateMeterNumber($meterNumber, $providerId, $meterType = 'prepaid') {
+    //     try {
+    //         // Log incoming parameters
+    //         error_log("\n=== METER VALIDATION INIT START ===");
+    //         error_log("Meter Number: " . $meterNumber);
+    //         error_log("Provider ID: " . $providerId);
+    //         error_log("Meter Type: " . $meterType);
+    //         error_log("=== METER VALIDATION INIT END ===\n");
             
-            // Get the provider information
-            $query = "SELECT provider, abbreviation, electricityid FROM electricityid WHERE eId = ?";
-            $provider = $this->db->query($query, [$providerId]);
+    //         // Get the provider information
+    //         $query = "SELECT provider, abbreviation, electricityid FROM electricityid WHERE eId = ?";
+    //         $provider = $this->db->query($query, [$providerId]);
             
-            if (empty($provider)) {
-                throw new Exception("Invalid provider ID");
-            }
+    //         if (empty($provider)) {
+    //             throw new Exception("Invalid provider ID");
+    //         }
 
-            $provider = $provider[0];
+    //         $provider = $provider[0];
             
-            // Get API configuration
-            $apiDetails = $this->getProviderDetails()[0];
+    //         // Get API configuration
+    //         $apiDetails = $this->getProviderDetails()[0];
             
-            // Convert meter type to lowercase for consistency
-            $meterType = strtolower($meterType);
+    //         // Convert meter type to lowercase for consistency
+    //         $meterType = strtolower($meterType);
             
-            // Prepare the API request using Strowallet verify-merchant endpoint
-            $curl = curl_init();
+    //         // Prepare the API request using Strowallet verify-merchant endpoint
+    //         $curl = curl_init();
 
-            // Strowallet verification endpoint is always at this URL
-            $baseUrl = 'https://strowallet.com';
+    //         // Strowallet verification endpoint is always at this URL
+    //         $baseUrl = 'https://strowallet.com';
 
-            // Use hardcoded public key for Strowallet verification
-            $publicKey = 'pub_c7Y8ufejLZon3gDMNMnBQxQXyIwNVWhXshmA1JCh';
+    //         // Use hardcoded public key for Strowallet verification
+    //         $publicKey = 'pub_c7Y8ufejLZon3gDMNMnBQxQXyIwNVWhXshmA1JCh';
 
-            // Map DB provider names/abbreviations to Strowallet service_name slugs
-            $providerMap = [
-                'Ikeja Electric' => 'ikeja-electric',
-                'Eko Electric' => 'eko-electric',
-                'Kano Electric' => 'kano-electric',
-                'Port Harcourt Electric' => 'portharcourt-electric',
-                'Jos Electric' => 'jos-electric',
-                'Ibadan Electric' => 'ibadan-electric',
-                'Kaduna Electric' => 'kaduna-electric',
-                'Abuja Electric' => 'abuja-electric',
-                'Enugu Electric' => 'enugu-electric',
-                'Benin Electric' => 'benin-electric',
-                'Aba Electric' => 'aba-electric',
-                'Yola Electric' => 'yola-electric',
-                // also map common DB abbreviations if used
-                'IE' => 'ikeja-electric',
-                'EKEDC' => 'eko-electric',
-                'KEDCO' => 'kano-electric',
-                'PHEDC' => 'portharcourt-electric',
-                'JED' => 'jos-electric',
-                'IBEDC' => 'ibadan-electric',
-                'KEDC' => 'kaduna-electric',
-                'AEDC' => 'abuja-electric',
-                'ENUGU' => 'enugu-electric',
-                'BENIN' => 'benin-electric',
-                'YOLA' => 'yola-electric',
-            ];
+    //         // Map DB provider names/abbreviations to Strowallet service_name slugs
+    //         $providerMap = [
+    //             'Ikeja Electric' => 'ikeja-electric',
+    //             'Eko Electric' => 'eko-electric',
+    //             'Kano Electric' => 'kano-electric',
+    //             'Port Harcourt Electric' => 'portharcourt-electric',
+    //             'Jos Electric' => 'jos-electric',
+    //             'Ibadan Electric' => 'ibadan-electric',
+    //             'Kaduna Electric' => 'kaduna-electric',
+    //             'Abuja Electric' => 'abuja-electric',
+    //             'Enugu Electric' => 'enugu-electric',
+    //             'Benin Electric' => 'benin-electric',
+    //             'Aba Electric' => 'aba-electric',
+    //             'Yola Electric' => 'yola-electric',
+    //             // also map common DB abbreviations if used
+    //             'IE' => 'ikeja-electric',
+    //             'EKEDC' => 'eko-electric',
+    //             'KEDCO' => 'kano-electric',
+    //             'PHEDC' => 'portharcourt-electric',
+    //             'JED' => 'jos-electric',
+    //             'IBEDC' => 'ibadan-electric',
+    //             'KEDC' => 'kaduna-electric',
+    //             'AEDC' => 'abuja-electric',
+    //             'ENUGU' => 'enugu-electric',
+    //             'BENIN' => 'benin-electric',
+    //             'YOLA' => 'yola-electric',
+    //         ];
 
-            $dbProviderKey = $provider['provider'] ?? $provider['abbreviation'] ?? '';
-            $serviceName = $providerMap[$dbProviderKey] ?? null;
-            if (empty($serviceName)) {
-                // fallback: sanitize provider string to a slug-like format
-                $serviceName = strtolower(preg_replace('/[^a-zA-Z0-9\s-]/', '', ($provider['provider'] ?? $provider['abbreviation'])));
-                $serviceName = str_replace([' ', '_'], '-', $serviceName);
-            }
+    //         $dbProviderKey = $provider['provider'] ?? $provider['abbreviation'] ?? '';
+    //         $serviceName = $providerMap[$dbProviderKey] ?? null;
+    //         if (empty($serviceName)) {
+    //             // fallback: sanitize provider string to a slug-like format
+    //             $serviceName = strtolower(preg_replace('/[^a-zA-Z0-9\s-]/', '', ($provider['provider'] ?? $provider['abbreviation'])));
+    //             $serviceName = str_replace([' ', '_'], '-', $serviceName);
+    //         }
 
-            $url = $baseUrl . '/api/electricity/verify-merchant/';
+    //         $url = $baseUrl . '/api/electricity/verify-merchant/';
 
-            $payload = json_encode([
-                'meter_type' => $meterType,
-                'meter_number' => $meterNumber,
-                'service_name' => $serviceName,
-                'public_key' => $publicKey,
-            ]);
+    //         $payload = json_encode([
+    //             'meter_type' => $meterType,
+    //             'meter_number' => $meterNumber,
+    //             'service_name' => $serviceName,
+    //             'public_key' => $publicKey,
+    //         ]);
 
-            // Log the request details
-            error_log("=== METER VALIDATION REQUEST START ===");
-            error_log("URL: " . $url);
-            error_log("API Key (partial): " . substr($publicKey, 0, 10) . "...");
-            error_log("Service Name: " . $serviceName);
-            error_log("Meter Type: " . $meterType);
-            error_log("Meter Number: " . $meterNumber);
-            error_log("Payload: " . $payload);
-            error_log("=== METER VALIDATION REQUEST END ===");
+    //         // Log the request details
+    //         error_log("=== METER VALIDATION REQUEST START ===");
+    //         error_log("URL: " . $url);
+    //         error_log("API Key (partial): " . substr($publicKey, 0, 10) . "...");
+    //         error_log("Service Name: " . $serviceName);
+    //         error_log("Meter Type: " . $meterType);
+    //         error_log("Meter Number: " . $meterNumber);
+    //         error_log("Payload: " . $payload);
+    //         error_log("=== METER VALIDATION REQUEST END ===");
 
-            curl_setopt_array($curl, array(
-                CURLOPT_URL => $url,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_ENCODING => '',
-                CURLOPT_MAXREDIRS => 10,
-                CURLOPT_TIMEOUT => 30,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                CURLOPT_CUSTOMREQUEST => 'POST',
-                CURLOPT_POSTFIELDS => $payload,
-                CURLOPT_HTTPHEADER => array(
-                    'Accept: application/json',
-                    'Content-Type: application/json'
-                ),
-            ));
+    //         curl_setopt_array($curl, array(
+    //             CURLOPT_URL => $url,
+    //             CURLOPT_RETURNTRANSFER => true,
+    //             CURLOPT_ENCODING => '',
+    //             CURLOPT_MAXREDIRS => 10,
+    //             CURLOPT_TIMEOUT => 30,
+    //             CURLOPT_FOLLOWLOCATION => true,
+    //             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+    //             CURLOPT_CUSTOMREQUEST => 'POST',
+    //             CURLOPT_POSTFIELDS => $payload,
+    //             CURLOPT_HTTPHEADER => array(
+    //                 'Accept: application/json',
+    //                 'Content-Type: application/json'
+    //             ),
+    //         ));
 
-            $response = curl_exec($curl);
-            $err = curl_error($curl);
-            $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            curl_close($curl);
+    //         $response = curl_exec($curl);
+    //         $err = curl_error($curl);
+    //         $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    //         curl_close($curl);
 
-            // Log the response
-            error_log("=== METER VALIDATION RESPONSE START ===");
-            error_log("HTTP Code: " . $httpCode);
-            error_log("Raw Response: " . $response);
-            if ($err) {
-                error_log("cURL Error: " . $err);
-            }
-            error_log("=== METER VALIDATION RESPONSE END ===");
+    //         // Log the response
+    //         error_log("=== METER VALIDATION RESPONSE START ===");
+    //         error_log("HTTP Code: " . $httpCode);
+    //         error_log("Raw Response: " . $response);
+    //         if ($err) {
+    //             error_log("cURL Error: " . $err);
+    //         }
+    //         error_log("=== METER VALIDATION RESPONSE END ===");
 
-            if ($err) {
-                error_log("cURL Error: " . $err);
-                throw new Exception("cURL Error: " . $err);
-            }
+    //         if ($err) {
+    //             error_log("cURL Error: " . $err);
+    //             throw new Exception("cURL Error: " . $err);
+    //         }
 
-            $result = json_decode($response, true);
+    //         $result = json_decode($response, true);
             
-            // Log parsed result
-            error_log("=== METER VALIDATION PARSED RESULT START ===");
-            error_log("Parsed Result: " . json_encode($result));
-            error_log("=== METER VALIDATION PARSED RESULT END ===");
+    //         // Log parsed result
+    //         error_log("=== METER VALIDATION PARSED RESULT START ===");
+    //         error_log("Parsed Result: " . json_encode($result));
+    //         error_log("=== METER VALIDATION PARSED RESULT END ===");
 
-            if (!$result || !is_array($result)) {
-                error_log("=== METER VALIDATION ERROR ===");
-                error_log("Invalid or empty response from provider");
-                error_log("=== END ERROR ===");
-                return array(
-                    'status' => 'error',
-                    'message' => 'fail to validate meter'
-                );
-            }
+    //         if (!$result || !is_array($result)) {
+    //             error_log("=== METER VALIDATION ERROR ===");
+    //             error_log("Invalid or empty response from provider");
+    //             error_log("=== END ERROR ===");
+    //             return array(
+    //                 'status' => 'error',
+    //                 'message' => 'fail to validate meter'
+    //             );
+    //         }
 
-            // Normalise response container
-            $d = [];
-            if (isset($result['data']) && is_array($result['data'])) {
-                $d = $result['data'];
-            } else {
-                $d = $result;
-            }
+    //         // Normalise response container
+    //         $d = [];
+    //         if (isset($result['data']) && is_array($result['data'])) {
+    //             $d = $result['data'];
+    //         } else {
+    //             $d = $result;
+    //         }
 
-            // Try several possible field names for customer name/address
-            $name = $d['name'] ?? $d['customer_name'] ?? ($d['customer']['name'] ?? null);
-            $address = $d['address'] ?? $d['customer_address'] ?? ($d['customer']['address'] ?? null);
+    //         // Try several possible field names for customer name/address
+    //         $name = $d['name'] ?? $d['customer_name'] ?? ($d['customer']['name'] ?? null);
+    //         $address = $d['address'] ?? $d['customer_address'] ?? ($d['customer']['address'] ?? null);
 
-            $isInvalid = isset($d['invalid']) && $d['invalid'] === true;
-            $hasRequiredData = !empty($name);
+    //         $isInvalid = isset($d['invalid']) && $d['invalid'] === true;
+    //         $hasRequiredData = !empty($name);
 
-            // Log validation result
-            error_log("=== METER VALIDATION CHECK START ===");
-            error_log("Is Invalid: " . ($isInvalid ? 'YES' : 'NO'));
-            error_log("Has Required Data: " . ($hasRequiredData ? 'YES' : 'NO'));
-            error_log("Customer Name: " . ($name ?? 'NULL'));
-            error_log("Customer Address: " . ($address ?? 'NULL'));
-            error_log("=== METER VALIDATION CHECK END ===");
+    //         // Log validation result
+    //         error_log("=== METER VALIDATION CHECK START ===");
+    //         error_log("Is Invalid: " . ($isInvalid ? 'YES' : 'NO'));
+    //         error_log("Has Required Data: " . ($hasRequiredData ? 'YES' : 'NO'));
+    //         error_log("Customer Name: " . ($name ?? 'NULL'));
+    //         error_log("Customer Address: " . ($address ?? 'NULL'));
+    //         error_log("=== METER VALIDATION CHECK END ===");
 
-            if ($isInvalid || !$hasRequiredData) {
-                error_log("=== METER VALIDATION ERROR ===");
-                error_log("Provider reported invalid or incomplete data");
-                error_log("=== END ERROR ===");
-                return array(
-                    'status' => 'error',
-                    'message' => 'fail to validate meter'
-                );
-            }
+    //         if ($isInvalid || !$hasRequiredData) {
+    //             error_log("=== METER VALIDATION ERROR ===");
+    //             error_log("Provider reported invalid or incomplete data");
+    //             error_log("=== END ERROR ===");
+    //             return array(
+    //                 'status' => 'error',
+    //                 'message' => 'fail to validate meter'
+    //             );
+    //         }
 
-            error_log("=== METER VALIDATION SUCCESS ===");
-            error_log("Meter validation successful for: " . $meterNumber);
-            error_log("Customer: " . $name);
-            error_log("=== END SUCCESS ===");
+    //         error_log("=== METER VALIDATION SUCCESS ===");
+    //         error_log("Meter validation successful for: " . $meterNumber);
+    //         error_log("Customer: " . $name);
+    //         error_log("=== END SUCCESS ===");
 
-            return array(
-                'status' => 'success',
-                'data' => array(
-                    'invalid' => false,
-                    'name' => $name,
-                    'address' => $address,
-                    'meter_number' => $meterNumber,
-                    'provider' => $provider['provider']
-                )
-            );
+    //         return array(
+    //             'status' => 'success',
+    //             'data' => array(
+    //                 'invalid' => false,
+    //                 'name' => $name,
+    //                 'address' => $address,
+    //                 'meter_number' => $meterNumber,
+    //                 'provider' => $provider['provider']
+    //             )
+    //         );
 
-        } catch (Exception $e) {
-            // Log detailed exception server-side but return a generic message to the client
-            error_log("=== METER VALIDATION EXCEPTION ===");
-            error_log("Exception: " . $e->getMessage());
-            error_log("=== END EXCEPTION ===");
-            return array(
-                'status' => 'error',
-                'message' => 'fail to validate meter'
-            );
-        }
-    }
+    //     } catch (Exception $e) {
+    //         // Log detailed exception server-side but return a generic message to the client
+    //         error_log("=== METER VALIDATION EXCEPTION ===");
+    //         error_log("Exception: " . $e->getMessage());
+    //         error_log("=== END EXCEPTION ===");
+    //         return array(
+    //             'status' => 'error',
+    //             'message' => 'fail to validate meter'
+    //         );
+    //     }
+    // }
 }
 ?>

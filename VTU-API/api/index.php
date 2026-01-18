@@ -227,8 +227,193 @@ if ($endpoint === 'device') {
 // Final debug before switch
 error_log("About to enter switch with endpoint: '$endpoint'");
 
+// Refresh session on each authenticated request to prevent timeout
+// This ensures the session doesn't expire due to garbage collection during normal app usage
+initializeSession();
+if (isset($_SESSION['authenticated_user_id'])) {
+    $_SESSION['last_activity'] = time();
+    error_log("[SESSION] Session refreshed for user: " . $_SESSION['authenticated_user_id']);
+}
+
 try {
     switch ($endpoint) {
+        case 'check-session':
+            if ($requestMethod !== 'GET' && $requestMethod !== 'POST') {
+                throw new Exception('Method not allowed');
+            }
+            
+            // Check if user is authenticated
+            $userId = getAuthenticatedUserId();
+            
+            if ($userId === null) {
+                http_response_code(401);
+                $response['status'] = 'error';
+                $response['message'] = 'User not authenticated. Session has expired.';
+            } else {
+                // Touch session to keep it alive
+                $_SESSION['last_activity'] = time();
+                
+                $response['status'] = 'success';
+                $response['message'] = 'Session is valid';
+                $response['data'] = [
+                    'user_id' => $userId,
+                    'authenticated' => true,
+                ];
+            }
+            break;
+
+        case 'renew-session':
+            if ($requestMethod !== 'POST') {
+                throw new Exception('Method not allowed');
+            }
+            
+            // Log request headers for debugging
+            error_log("renew-session headers: " . json_encode(getallheaders()));
+            error_log("Content-Length: " . ($_SERVER['CONTENT_LENGTH'] ?? 'not set'));
+            error_log("Content-Type: " . ($_SERVER['CONTENT_TYPE'] ?? 'not set'));
+            
+            $rawInput = file_get_contents('php://input');
+            error_log("renew-session raw input length: " . strlen($rawInput));
+            error_log("renew-session raw input: " . $rawInput);
+            
+            if (empty($rawInput)) {
+                // Try to get from POST if available
+                if (!empty($_POST)) {
+                    $input = $_POST;
+                } else {
+                    http_response_code(400);
+                    $response['status'] = 'error';
+                    $response['message'] = 'No request body received';
+                    break;
+                }
+            } else {
+                $input = json_decode($rawInput, true);
+                error_log("renew-session decoded input: " . json_encode($input));
+            }
+            
+            if (!$input) {
+                http_response_code(400);
+                $response['status'] = 'error';
+                $response['message'] = 'Invalid JSON format';
+                break;
+            }
+            
+            if (!isset($input['user_id']) || !isset($input['password'])) {
+                error_log("Missing params. Input keys: " . json_encode(array_keys($input)));
+                error_log("user_id: " . ($input['user_id'] ?? 'NOT SET') . ", password: " . ($input['password'] ?? 'NOT SET'));
+                http_response_code(400);
+                $response['status'] = 'error';
+                $response['message'] = 'Missing required parameters: user_id and password';
+                break;
+            }
+            
+            $user_id = $input['user_id'];
+            $password = $input['password'];
+            
+            error_log("renew-session: Attempting to renew session for user_id: $user_id");
+            
+            try {
+                error_log("renew-session: Connecting to database...");
+                $db = new Database();
+                $conn = $db->getConnection();
+                error_log("renew-session: Database connected successfully");
+                
+                // Query database for user
+                error_log("renew-session: Preparing SQL statement...");
+                $stmt = $conn->prepare('SELECT sId, sPass, sFname, sLname, sEmail FROM subscribers WHERE sId = ?');
+                if (!$stmt) {
+                    throw new Exception('Prepare failed: ' . json_encode($conn->errorInfo()));
+                }
+                error_log("renew-session: SQL prepared successfully");
+                
+                error_log("renew-session: Binding parameters...");
+                $stmt->bindParam(1, $user_id, PDO::PARAM_INT);
+                
+                error_log("renew-session: Executing query...");
+                if (!$stmt->execute()) {
+                    throw new Exception('Execute failed: ' . json_encode($stmt->errorInfo()));
+                }
+                error_log("renew-session: Query executed successfully");
+                
+                $user = $stmt->fetch(PDO::FETCH_ASSOC);
+                error_log("renew-session: Result fetched");
+                
+                if (!$user) {
+                    http_response_code(401);
+                    $response['status'] = 'error';
+                    $response['message'] = 'User not found';
+                    error_log("renew-session: User not found with ID: $user_id");
+                } else {
+                    error_log("renew-session: User found: " . $user['sEmail']);
+                    
+                    // Verify password using the same method as login
+                    error_log("renew-session: Verifying password...");
+                    $computedHash = substr(sha1(md5($password)), 3, 10);
+                    error_log("renew-session: Stored hash: " . $user['sPass']);
+                    error_log("renew-session: Computed hash: " . $computedHash);
+                    
+                    if (!hash_equals($user['sPass'], $computedHash)) {
+                        http_response_code(401);
+                        $response['status'] = 'error';
+                        $response['message'] = 'Invalid password';
+                        error_log("renew-session: Password verification failed");
+                    } else {
+                        error_log("renew-session: Password verified successfully");
+                        
+                        // Initialize and renew session
+                        error_log("renew-session: Initializing session...");
+                        initializeSession();
+                        error_log("renew-session: Session initialized");
+                        
+                        // Set authenticated user in session
+                        error_log("renew-session: Setting authenticated user...");
+                        setAuthenticatedUser($user['sId'], $user['sFname'], $user['sLname'], $user['sEmail']);
+                        error_log("renew-session: Authenticated user set");
+                        
+                        // Update last activity
+                        $_SESSION['last_activity'] = time();
+                        
+                        // Session renewed successfully
+                        $response['status'] = 'success';
+                        $response['message'] = 'Session renewed successfully';
+                        $response['data'] = [
+                            'user_id' => $user['sId'],
+                            'name' => $user['sFname'] . ' ' . $user['sLname'],
+                            'email' => $user['sEmail'],
+                            'authenticated' => true,
+                        ];
+                        error_log("renew-session: Session renewed successfully for user: " . $user['sEmail']);
+                    }
+                }
+                
+            } catch (Exception $e) {
+                http_response_code(500);
+                error_log('Error in renew-session: ' . $e->getMessage());
+                error_log('Error trace: ' . $e->getTraceAsString());
+                $response['status'] = 'error';
+                $response['message'] = 'An error occurred while renewing session';
+            }
+            break;
+
+        case 'app-version':
+            if ($requestMethod !== 'GET') {
+                throw new Exception('Method not allowed');
+            }
+            
+            // Return latest app version info
+            $response['status'] = 'success';
+            $response['message'] = 'Version info fetched successfully';
+            $response['data'] = [
+                'latest_version' => '1.0.1',
+                'latest_build' => 7,
+                'min_version' => '1.0.0',
+                'force_update' => false,
+                'update_url' => 'https://play.google.com/store/apps/details?id=inc.mk.data',
+                'release_notes' => 'Bug fixes and improvements',
+                'timestamp' => date('Y-m-d H:i:s')
+            ];
+            break;
+
         case 'delete-account':
             if ($requestMethod !== 'POST') {
                 throw new Exception('Method not allowed');

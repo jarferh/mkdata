@@ -14,6 +14,7 @@ import './pages/onboarding_page.dart';
 import './services/firebase_service.dart';
 import './services/notification_service.dart';
 import './services/api_service.dart';
+import './widgets/auth_error_dialog.dart';
 
 /// Background message handler (must be a top-level function)
 @pragma('vm:entry-point')
@@ -88,10 +89,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // Listen for authentication failures and auto-logout
+    // Listen for authentication failures and show auth error dialog
     ApiService.authFailure.listen((_) {
-      debugPrint('Auth failure detected, logging out user');
-      _handleAutoLogout();
+      debugPrint('Auth failure detected, showing auth error dialog');
+      if (_navKey.currentContext != null && mounted) {
+        // Use the new AuthErrorDialog with better UI
+        AuthErrorDialog.show(_navKey.currentContext!);
+      }
     });
 
     // Set up foreground notification handler
@@ -108,60 +112,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // Navigate to relevant page based on notification payload
       // This is handled by NotificationService._routeNotification()
     };
-  }
-
-  Future<void> _handleAutoLogout() async {
-    try {
-      final nav = _navKey.currentState;
-      final context = _navKey.currentContext;
-
-      // Show modal dialog first
-      if (context != null && nav != null && nav.mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (BuildContext dialogContext) => AlertDialog(
-            title: const Text('Session Expired'),
-            content: const Text(
-              'Your session has expired. Please log in again to continue.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(dialogContext).pop();
-                  // After modal closes, proceed with logout and navigation
-                  _proceedWithLogout(nav);
-                },
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-      } else {
-        // If no context, proceed directly with logout
-        _proceedWithLogout(nav);
-      }
-    } catch (e) {
-      debugPrint('Error during auto-logout: $e');
-      final nav = _navKey.currentState;
-      if (nav != null && nav.mounted) {
-        nav.pushNamedAndRemoveUntil('/login', (route) => false);
-      }
-    }
-  }
-
-  Future<void> _proceedWithLogout(NavigatorState? nav) async {
-    try {
-      // Clear auth data
-      await ApiService().clearAuth();
-
-      // Navigate to login
-      if (nav != null && nav.mounted) {
-        nav.pushNamedAndRemoveUntil('/login', (route) => false);
-      }
-    } catch (e) {
-      debugPrint('Error during logout: $e');
-    }
   }
 
   @override

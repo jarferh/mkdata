@@ -35,39 +35,41 @@ class _SplashPageState extends State<SplashPage> {
     _checkLoginStatus();
   }
 
-  @override
-  void dispose() {
-    // Restore system UI overlays when leaving the splash page
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    super.dispose();
-  }
-
   Future<void> _checkLoginStatus() async {
     final prefs = await SharedPreferences.getInstance();
     final userData = prefs.getString('user_data');
     final onboardingCompleted = prefs.getBool('onboarding_completed') ?? false;
 
-    await Future.delayed(const Duration(seconds: 3));
+    await Future.delayed(const Duration(seconds: 2));
 
     if (mounted) {
-      if (userData != null) {
-        // User is logged in, go to welcome back page
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const WelcomePage()),
-        );
-      } else if (!onboardingCompleted) {
-        // First time user, show onboarding
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const OnboardingPage()),
-        );
-      } else {
-        // Show login/signup buttons
-        setState(() {
-          _showButtons = true;
-        });
-      }
+      _proceedWithLogin(
+        userData: userData,
+        onboardingCompleted: onboardingCompleted,
+      );
+    }
+  }
+
+  void _proceedWithLogin({String? userData, bool onboardingCompleted = false}) {
+    if (!mounted) return;
+
+    if (userData != null) {
+      // User is logged in, go to welcome back page
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const WelcomePage()),
+      );
+    } else if (!onboardingCompleted) {
+      // First time user, show onboarding
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const OnboardingPage()),
+      );
+    } else {
+      // Show login/signup buttons
+      setState(() {
+        _showButtons = true;
+      });
     }
   }
 

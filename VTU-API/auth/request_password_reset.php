@@ -136,6 +136,9 @@ try {
     // Record this attempt
     $_SESSION['reset_attempts'][$current_time] = 1;
 
+    // Log password reset attempt
+    error_log('[PASSWORD_RESET] Processing reset for: ' . $email);
+
     // Send email using PHPMailer
     $mail = new PHPMailer(true);
 
@@ -145,15 +148,25 @@ try {
         $mail->Host = getenv('MAIL_HOST') ?: 'mail.mkdata.com.ng';
         $mail->SMTPAuth = true;
         $mail->Username = getenv('MAIL_USERNAME') ?: 'no-reply@mkdata.com.ng';
-        $mail->Password = getenv('MAIL_PASSWORD');
+        $mail->Password = getenv('MAIL_PASSWORD') ?: ']xG28YL,APm-+xbx';
         
         if (!$mail->Password) {
+            error_log('[PASSWORD_RESET_ERROR] MAIL_PASSWORD not configured in environment');
             throw new Exception('MAIL_PASSWORD not configured in environment');
         }
 
-        // Use STARTTLS for port 587
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port = (int)(getenv('MAIL_PORT') ?: 587);
+        // Use STARTTLS for port 587, SMTPS for port 465
+        $mailPort = (int)(getenv('MAIL_PORT') ?: 587);
+        if ($mailPort == 465) {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+        } else {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        }
+        $mail->Port = $mailPort;
+        
+        // Add timeout to prevent hanging
+        $mail->Timeout = 10;
+        $mail->SMTPKeepAlive = true;
         
         // Disable debugging in production
         $mail->SMTPDebug = 0;
@@ -161,8 +174,11 @@ try {
             // Silent - debugging disabled
         };
 
+        error_log('[PASSWORD_RESET] SMTP Config - Host: ' . $mail->Host . ', Port: ' . $mail->Port . ', Encryption: ' . ($mailPort == 465 ? 'SMTPS' : 'STARTTLS'));
+
         $mail->setFrom(getenv('MAIL_USERNAME') ?: 'no-reply@mkdata.com.ng', 'MK DATA');
         $mail->addAddress($email);
+        error_log('[PASSWORD_RESET] Email recipient added: ' . $email);
 
         // Content
         $mail->isHTML(true);
@@ -206,7 +222,10 @@ try {
 
         $mail->AltBody = "Click this link to reset your password: {$reset_link}";
 
-        $mail->send();
+        error_log('[PASSWORD_RESET] Calling $mail->send()...');
+        $sendResult = $mail->send();
+        error_log('[PASSWORD_RESET] Email send completed with result: ' . ($sendResult ? 'true' : 'false'));
+        error_log('[PASSWORD_RESET] Email sent successfully to: ' . $email);
 
         http_response_code(200);
         echo json_encode([
@@ -214,10 +233,12 @@ try {
             "message" => "If your email is registered, you will receive reset instructions shortly."
         ]);
     } catch (Exception $e) {
+        $errorMsg = $e->getMessage();
+        error_log('[PASSWORD_RESET_ERROR] ' . $errorMsg);
         http_response_code(500);
         echo json_encode([
             "status" => "error",
-            "message" => "Unable to send reset instructions. Please try again later."
+            "message" => "Unable to send reset instructions. Please try again later. (Error: " . $errorMsg . ")"
         ]);
     }
 } catch (Exception $e) {

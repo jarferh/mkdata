@@ -55,14 +55,15 @@ if(!empty($data->email) && !empty($data->password)){
         if($user->validatePassword($data->password)){
             // Save user ID to session (THIS is the authenticated user)
             setAuthenticatedUser($user->sId, $user->sEmail, 'user');
-            // Force session write/close to ensure session data is persisted immediately
-            if (function_exists('session_write_close')) {
-                session_write_close();
-            }
-            // Log session diagnostics to error log for debugging (temporary)
-            error_log('Login: session_id=' . session_id());
-            error_log('Login: session_save_path=' . ini_get('session.save_path'));
-            error_log('Login: session_content=' . json_encode(isset($_SESSION) ? $_SESSION : []));
+            
+            // Log session diagnostics to error log for debugging
+            error_log('Login BEFORE write_close: session_id=' . session_id());
+            error_log('Login BEFORE write_close: $_SESSION=' . json_encode($_SESSION));
+            
+            // Note: Do NOT call session_write_close() here as it closes the session
+            // The session will be automatically written when the PHP script ends
+            
+            error_log('Login AFTER (implicit) write: session_id=' . session_id());
             
             http_response_code(200);
             echo json_encode(array(
@@ -91,10 +92,15 @@ if(!empty($data->email) && !empty($data->password)){
             
             // Send login notification
             try {
-                require_once __DIR__ . '/../api/send-transaction-notification.php';
-                sendTransactionNotification($user->sId, 'login', [
-                    'time' => date('H:i')
-                ]);
+                $notificationFile = __DIR__ . '/../api/send-transaction-notification.php';
+                if (file_exists($notificationFile)) {
+                    require_once $notificationFile;
+                    sendTransactionNotification($user->sId, 'login', [
+                        'time' => date('H:i')
+                    ]);
+                } else {
+                    error_log('Notification file not found: ' . $notificationFile);
+                }
             } catch (Exception $e) {
                 error_log('Failed to send login notification for user ' . $user->sId . ': ' . $e->getMessage());
             }

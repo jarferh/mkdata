@@ -93,11 +93,19 @@ class AuthService {
         {'email': email},
       );
 
-      if (response['status'] == 'success') {
-        return;
-      }
+      // Debug/log the response so timeouts or unexpected shapes are visible
+      print('[AuthService] forgotPassword response: $response');
+
+      // Accept different response shapes: prefer top-level 'success' boolean,
+      // fall back to 'status' == 'success', or presence of a message.
+      final bool ok =
+          (response['success'] == true) || (response['status'] == 'success');
+
+      if (ok) return;
+
       throw Exception(response['message'] ?? 'Failed to send reset email');
     } catch (e) {
+      print('[AuthService] forgotPassword error: $e');
       rethrow;
     }
   }

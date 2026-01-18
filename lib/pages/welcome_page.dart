@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../utils/network_utils.dart';
 import '../services/api_service.dart';
+import '../widgets/password_verification_dialog.dart';
 
 class WelcomePage extends StatefulWidget {
   final bool restorePrevious;
@@ -131,6 +132,8 @@ class _WelcomePageState extends State<WelcomePage> {
   }
 
   Future<void> _authenticateWithBiometrics() async {
+    if (!mounted) return;
+    setState(() => _isVerifying = true);
     try {
       bool authenticated = await _localAuth.authenticate(
         localizedReason: 'Please authenticate to access your account',
@@ -141,7 +144,14 @@ class _WelcomePageState extends State<WelcomePage> {
       );
 
       if (authenticated && mounted) {
-        // Require internet before allowing entry
+        // First verify session with backend
+        final isAuthenticated = await _checkAuthenticationStatus();
+        if (!isAuthenticated) {
+          if (mounted) _showSessionExpiredModal();
+          return;
+        }
+
+        // Require internet before proceeding
         final ok = await _checkInternetConnection();
         if (!ok) {
           if (mounted) {
@@ -152,14 +162,47 @@ class _WelcomePageState extends State<WelcomePage> {
           }
           return;
         }
-        if (widget.restorePrevious) {
-          Navigator.of(context).pop();
-        } else {
-          Navigator.of(context).pushReplacementNamed('/dashboard');
+
+        // Fetch transactions to further verify session and data availability
+        try {
+          final api = ApiService();
+          final responseData = await api.get('check-session');
+          if (responseData['status'] == 'success') {
+            // proceed to dashboard
+            if (mounted) {
+              if (widget.restorePrevious) {
+                Navigator.of(context).pop();
+              } else {
+                Navigator.of(context).pushReplacementNamed('/dashboard');
+              }
+            }
+          } else {
+            throw Exception(
+              responseData['message'] ?? 'Session verification failed',
+            );
+          }
+        } catch (e) {
+          debugPrint('Biometric: error checking session: $e');
+          final msg = e.toString();
+          if (msg.contains('not authenticated') ||
+              msg.contains('401') ||
+              msg.contains('Session') ||
+              msg.contains('expired')) {
+            if (mounted) _showSessionExpiredModal();
+          } else {
+            if (mounted)
+              showNetworkErrorSnackBar(
+                context,
+                'Failed to verify session: ${e.toString()}',
+              );
+          }
+          return;
         }
       }
     } catch (e) {
-      print('Error during biometric authentication: $e');
+      debugPrint('Error during biometric authentication: $e');
+    } finally {
+      if (mounted) setState(() => _isVerifying = false);
     }
   }
 
@@ -251,12 +294,48 @@ class _WelcomePageState extends State<WelcomePage> {
           return;
         }
 
-        if (mounted) {
-          if (widget.restorePrevious) {
-            Navigator.of(context).pop();
+        // Check session validity with lightweight API call
+        debugPrint('Checking session validity...');
+        try {
+          final api = ApiService();
+          final responseData = await api.get('check-session');
+
+          if (responseData['status'] == 'success') {
+            debugPrint('Session is valid, user authenticated');
+            // Session check successful - user is authenticated
+            if (mounted) {
+              if (widget.restorePrevious) {
+                Navigator.of(context).pop();
+              } else {
+                Navigator.of(context).pushReplacementNamed('/dashboard');
+              }
+            }
           } else {
-            Navigator.of(context).pushReplacementNamed('/dashboard');
+            throw Exception(
+              responseData['message'] ?? 'Session verification failed',
+            );
           }
+        } catch (e) {
+          debugPrint('Error checking session: $e');
+          // Check if it's an authentication error
+          if (e.toString().contains('not authenticated') ||
+              e.toString().contains('401') ||
+              e.toString().contains('Session') ||
+              e.toString().contains('expired')) {
+            if (mounted) {
+              // Show auth error dialog for expired session
+              _showSessionExpiredModal();
+            }
+          } else {
+            // Show generic error
+            if (mounted) {
+              showNetworkErrorSnackBar(
+                context,
+                'Failed to verify session: ${e.toString()}',
+              );
+            }
+          }
+          return;
         }
       } else {
         setState(() {
@@ -273,11 +352,25 @@ class _WelcomePageState extends State<WelcomePage> {
   }
 
   void _logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('user_data');
-    await prefs.remove('login_pin');
-    if (mounted) {
-      Navigator.of(context).pushReplacementNamed('/login');
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('user_data');
+      await prefs.remove('login_pin');
+      await prefs.remove('php_cookie');
+      await prefs.remove('update_skip_time');
+      await prefs.remove('biometric_enabled');
+
+      // Clear auth data using ApiService
+      await ApiService().clearAuth();
+
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/login');
+      }
+    } catch (e) {
+      debugPrint('Error during logout: $e');
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/login');
+      }
     }
   }
 
@@ -293,6 +386,10 @@ class _WelcomePageState extends State<WelcomePage> {
         debugPrint('User data not found in local storage - session expired');
         return false;
       }
+
+      // Add a small delay to ensure session is persisted on server
+      // This helps with timing issues where session isn't fully written yet
+      await Future.delayed(const Duration(milliseconds: 500));
 
       // Now verify with backend that session is still valid
       debugPrint('User data found locally, verifying with backend...');
@@ -314,47 +411,49 @@ class _WelcomePageState extends State<WelcomePage> {
     }
   }
 
-  void _showSessionExpiredModal() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext dialogContext) => AlertDialog(
-        title: const Text('Session Expired'),
-        content: const Text(
-          'Your session has expired. Please log in again to continue.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(dialogContext).pop();
-              _proceedWithLogout();
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
+  void _showSessionExpiredModal() async {
+    // Ensure we're on the main thread and the context is still valid
+    if (!mounted) return;
 
-  Future<void> _proceedWithLogout() async {
-    try {
-      // Clear auth data using ApiService
-      await ApiService().clearAuth();
+    // Get user email for display
+    final prefs = await SharedPreferences.getInstance();
+    final userDataJson = prefs.getString('user_data');
+    String? userEmail;
 
-      if (mounted) {
-        // Navigate to login page
-        Navigator.of(
-          context,
-        ).pushNamedAndRemoveUntil('/login', (route) => false);
-      }
-    } catch (e) {
-      debugPrint('Error during logout: $e');
-      if (mounted) {
-        Navigator.of(
-          context,
-        ).pushNamedAndRemoveUntil('/login', (route) => false);
+    if (userDataJson != null) {
+      try {
+        final userData = Map<String, dynamic>.from(jsonDecode(userDataJson));
+        userEmail = userData['sEmail'];
+      } catch (e) {
+        debugPrint('Error parsing user data: $e');
       }
     }
+
+    // Add a small delay to ensure the UI is ready
+    Future.delayed(const Duration(milliseconds: 100), () async {
+      if (mounted && context.mounted) {
+        debugPrint('Showing password verification modal');
+        // Show password verification dialog
+        final result = await PasswordVerificationDialog.show(
+          context,
+          userEmail: userEmail,
+        );
+
+        // If user verified password (result == true), navigate to dashboard
+        if (result == true && mounted) {
+          debugPrint('Session renewed, proceeding to dashboard');
+          if (widget.restorePrevious) {
+            Navigator.of(context).pop();
+          } else {
+            Navigator.of(context).pushReplacementNamed('/dashboard');
+          }
+        } else if (result == false && mounted) {
+          // User chose to logout
+          debugPrint('User chose to logout');
+          _logout();
+        }
+      }
+    });
   }
 
   @override

@@ -306,8 +306,25 @@ class ApiService {
       final url = '$baseUrl/auth/verify-session.php';
 
       // Make a GET request to verify session - this will include the PHPSESSID cookie
+      // Ensure in-memory cookie is populated from persisted storage if missing
+      final prefsBeforeVerify = await _prefs;
+      if ((_cookie == null || _cookie!.isEmpty) &&
+          prefsBeforeVerify.getString('php_cookie') != null) {
+        _cookie = prefsBeforeVerify.getString('php_cookie');
+        print('Loaded cookie from prefs in verify(): $_cookie');
+      }
+
+      // Build headers and ensure cookie is attached (include lowercase 'cookie' for safety)
+      final verifyHeaders = Map<String, String>.from(_headers());
+      if (_cookie != null && _cookie!.isNotEmpty) {
+        verifyHeaders['cookie'] = _cookie!;
+      }
+
+      print('Outgoing Verify headers: $verifyHeaders');
+
+      // Use the IOClient so behavior matches other requests and we can rely on low-level cookies
       final response = await _withTimeout(
-        http.get(Uri.parse(url), headers: _headers()),
+        _client.get(Uri.parse(url), headers: verifyHeaders),
       );
 
       print('Verify session response status: ${response.statusCode}');
@@ -1511,6 +1528,56 @@ class ApiService {
       return null;
     }
     return null;
+  }
+
+  /// Fetch site settings (contact information, social media links, etc.)
+  Future<Map<String, dynamic>> getSiteSettings() async {
+    try {
+      final response = await _client
+          .get(
+            Uri.parse('$baseUrl/api/site-settings.php?action=contact'),
+            headers: _headers(),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      print('getSiteSettings response: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['status'] == 'success' && data['data'] != null) {
+          return data['data'] as Map<String, dynamic>;
+        }
+      }
+      throw Exception('Failed to fetch site settings');
+    } catch (e) {
+      print('Error in getSiteSettings: $e');
+      rethrow;
+    }
+  }
+
+  /// Fetch FAQ items
+  Future<List<Map<String, dynamic>>> getFAQ() async {
+    try {
+      final response = await _client
+          .get(
+            Uri.parse('$baseUrl/api/site-settings.php?action=faq'),
+            headers: _headers(),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      print('getFAQ response: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['status'] == 'success' && data['data'] != null) {
+          return List<Map<String, dynamic>>.from(data['data']);
+        }
+      }
+      throw Exception('Failed to fetch FAQ');
+    } catch (e) {
+      print('Error in getFAQ: $e');
+      rethrow;
+    }
   }
 
   void dispose() {

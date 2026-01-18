@@ -18,6 +18,11 @@ function initializeSession() {
         $httpOnly = getenv('SESSION_HTTPONLY') === 'true' || getenv('SESSION_HTTPONLY') === '1' ?: true;
         $sameSite = getenv('SESSION_SAMESITE') ?: 'Lax';
         
+        // Ensure PHP garbage collection doesn't delete session before lifetime expires
+        ini_set('session.gc_maxlifetime', $lifetime);
+        ini_set('session.gc_probability', 1);
+        ini_set('session.gc_divisor', 100); // 1% chance to run GC on each request
+        
         // Set session configuration
         session_set_cookie_params([
             'lifetime' => $lifetime,

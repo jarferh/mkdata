@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+import '../services/version_service.dart';
+import '../widgets/update_available_dialog.dart';
 import 'package:marquee/marquee.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'wallet_page.dart';
@@ -64,6 +66,10 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _bonusClaimable = false;
   double _bonusAmount = 0.0;
   bool _bonusDismissed = false;
+  bool _isCheckingUpdate = false; // for update check button loading state
+  bool _updateDialogShown =
+      false; // prevent showing update dialog multiple times in same session
+  final VersionService _versionService = VersionService();
 
   // Helper to format numbers with thousand separators (e.g. 10,000)
   String _addCommas(String s) {
@@ -108,6 +114,8 @@ class _DashboardPageState extends State<DashboardPage> {
     _loadCachedUserData();
     _loadProfilePhoto();
     _loadUserData();
+    // Check for app updates
+    _checkForUpdate();
     // show welcome popup once when the page is first opened
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !_welcomeShown) {
@@ -122,6 +130,8 @@ class _DashboardPageState extends State<DashboardPage> {
     // Add small delay to ensure loading state is visible
     await Future.delayed(const Duration(milliseconds: 500));
     await _loadUserData();
+    // Check for updates on refresh
+    await _checkForUpdate();
 
     // Re-show the welcome dialog when the user explicitly refreshes
     if (mounted) {
@@ -1094,7 +1104,31 @@ class _DashboardPageState extends State<DashboardPage> {
                     ],
                   ),
                 ),
-                // Notification icon on the right
+                // Notification icon and Update check icon on the right
+                IconButton(
+                  icon: Icon(
+                    Icons.cloud_download_outlined,
+                    color: Colors.white,
+                    size: getResponsiveSize(context, 22),
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: _isCheckingUpdate ? null : _checkForUpdate,
+                  tooltip: 'Check for Updates',
+                ),
+                if (_isCheckingUpdate)
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Padding(
+                      padding: const EdgeInsets.all(2.0),
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    ),
+                  )
+                else
+                  SizedBox(width: 24),
                 IconButton(
                   icon: Icon(
                     Icons.notifications_outlined,
@@ -2113,5 +2147,89 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       ),
     );
+  }
+
+  // Check for app updates and show modal if available
+  Future<void> _checkForUpdate() async {
+    if (_isCheckingUpdate) {
+      print('[Dashboard] Update check already in progress, skipping');
+      return;
+    }
+
+    // Don't show update dialog if already shown in this session
+    if (_updateDialogShown) {
+      print('[Dashboard] Update dialog already shown this session, skipping');
+      return;
+    }
+
+    // Check if user has already skipped update today
+    final prefs = await SharedPreferences.getInstance();
+    final lastSkipTime = prefs.getString('update_skip_time');
+    if (lastSkipTime != null) {
+      final skipDate = DateTime.parse(lastSkipTime);
+      final today = DateTime.now();
+      if (skipDate.year == today.year &&
+          skipDate.month == today.month &&
+          skipDate.day == today.day) {
+        print('[Dashboard] User already skipped update today');
+        setState(() => _updateDialogShown = true);
+        return;
+      }
+    }
+
+    setState(() => _isCheckingUpdate = true);
+
+    try {
+      print('[Dashboard] Checking for app updates...');
+      final updateInfo = await _versionService.checkForUpdate(forceCheck: true);
+
+      if (!mounted) {
+        print('[Dashboard] Widget unmounted, cancelling');
+        return;
+      }
+
+      print('[Dashboard] Update check result: $updateInfo');
+
+      if (updateInfo != null) {
+        print('[Dashboard] Update available: ${updateInfo.latestVersion}');
+        // Mark dialog as shown to prevent showing again in this session
+        setState(() => _updateDialogShown = true);
+
+        // Show update dialog
+        showDialog(
+          context: context,
+          barrierDismissible: !updateInfo.isForceUpdate,
+          builder: (context) => UpdateAvailableDialog(
+            updateInfo: updateInfo,
+            onDismiss: () async {
+              print('[Dashboard] Update dialog dismissed/skipped');
+              // Save skip time to prevent showing again today
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString(
+                'update_skip_time',
+                DateTime.now().toIso8601String(),
+              );
+            },
+          ),
+        );
+      } else {
+        print('[Dashboard] No update available');
+      }
+    } catch (e) {
+      print('[Dashboard] Error checking for update: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to check for updates'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCheckingUpdate = false);
+      }
+    }
   }
 }

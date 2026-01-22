@@ -1029,7 +1029,7 @@ class _Airtime2CashPageState extends State<Airtime2CashPage> {
                       ),
                     ],
                   );
-                }).toList(),
+                }),
               ],
             ),
           ],

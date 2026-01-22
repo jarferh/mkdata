@@ -190,11 +190,12 @@ class _WelcomePageState extends State<WelcomePage> {
               msg.contains('expired')) {
             if (mounted) _showSessionExpiredModal();
           } else {
-            if (mounted)
+            if (mounted) {
               showNetworkErrorSnackBar(
                 context,
                 'Failed to verify session: ${e.toString()}',
               );
+            }
           }
           return;
         }

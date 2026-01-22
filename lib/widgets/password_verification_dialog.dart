@@ -83,7 +83,7 @@ class _PasswordVerificationDialogState
       } else {
         // Extract just the message from the response
         String errorMessage = 'Failed to renew session';
-        if (response is Map && response.containsKey('message')) {
+        if (response.containsKey('message')) {
           errorMessage = response['message'].toString();
         }
         setState(() => _errorMessage = errorMessage);

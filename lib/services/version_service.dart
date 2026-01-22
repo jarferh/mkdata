@@ -14,8 +14,12 @@ class VersionService {
     final parts2 = v2.split('.').map((p) => int.tryParse(p) ?? 0).toList();
 
     // Pad with zeros
-    while (parts1.length < parts2.length) parts1.add(0);
-    while (parts2.length < parts1.length) parts2.add(0);
+    while (parts1.length < parts2.length) {
+      parts1.add(0);
+    }
+    while (parts2.length < parts1.length) {
+      parts2.add(0);
+    }
 
     for (int i = 0; i < parts1.length; i++) {
       if (parts1[i] < parts2[i]) return -1;

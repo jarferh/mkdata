@@ -46,10 +46,9 @@ class _CommissionHistoryPageState extends State<CommissionHistoryPage> {
 
       final api = ApiService();
       final decoded = await api.get('commissions?user_id=$userId');
-      if (decoded == null ||
-          decoded['statusCode'] != null && decoded['statusCode'] != 200) {
+      if (decoded['statusCode'] != null && decoded['statusCode'] != 200) {
         setState(() {
-          _error = decoded is Map && decoded['message'] != null
+          _error = decoded['message'] != null
               ? decoded['message'].toString()
               : 'Failed to load commission history';
           _loading = false;
@@ -58,11 +57,11 @@ class _CommissionHistoryPageState extends State<CommissionHistoryPage> {
       }
       List<dynamic> list = [];
 
-      if (decoded is Map && decoded['commissions'] != null) {
+      if (decoded['commissions'] != null) {
         list = decoded['commissions'] as List<dynamic>;
       } else if (decoded is List) {
         list = decoded as List<dynamic>;
-      } else if (decoded is Map && decoded['data'] != null) {
+      } else if (decoded['data'] != null) {
         list = decoded['data'] as List<dynamic>;
       } else {
         // try to interpret the whole body as single item array
